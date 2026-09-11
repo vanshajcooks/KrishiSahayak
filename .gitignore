@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing & Linting
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Node & Frontend (Next.js)
+node_modules/
+.next/
+out/
+.npm/
+*.tsbuildinfo
+next-env.d.ts
+
+# Environment & Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Database (SQLite)
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+backend/data/
+
+# Hardware & Arduino / ESP32
+*.bin
+*.hex
+*.elf
+.pio/
+.vscode/
+
+# AI / ML Models & Datasets (Weights should not be committed to Git)
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+datasets/
+data/raw/
+runs/
+
+# OS Specific
+.DS_Store
+Thumbs.db
+desktop.ini
