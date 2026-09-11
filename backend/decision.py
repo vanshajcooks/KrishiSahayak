@@ -11,17 +11,41 @@ Design principles:
   never claiming confirmed leaf disease (which requires the vision model).
 """
 
+import sys
+
+if __name__ == "backend.decision":
+    sys.modules.setdefault("decision", sys.modules[__name__])
+elif __name__ == "decision":
+    sys.modules.setdefault("backend.decision", sys.modules[__name__])
+    try:
+        import backend
+        setattr(backend, "decision", sys.modules[__name__])
+    except ImportError:
+        pass
+
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Union
 
-from schemas import (
-    ActionCategory,
-    DecisionReport,
-    IrrigationAction,
-    MoistureStatus,
-    RiskLevel,
-    SensorReading,
-)
+
+try:
+    from backend.schemas import (
+        ActionCategory,
+        DecisionReport,
+        IrrigationAction,
+        MoistureStatus,
+        RiskLevel,
+        SensorReading,
+    )
+except ImportError:
+    from schemas import (
+        ActionCategory,
+        DecisionReport,
+        IrrigationAction,
+        MoistureStatus,
+        RiskLevel,
+        SensorReading,
+    )
+
 
 # ============================================================================
 # Agronomic Threshold Constants

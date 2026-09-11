@@ -9,6 +9,18 @@ Design principles:
 - Robust validation: Verifies image format with Pillow and handles errors gracefully.
 """
 
+import sys
+
+if __name__ == "backend.vision":
+    sys.modules.setdefault("vision", sys.modules[__name__])
+elif __name__ == "vision":
+    sys.modules.setdefault("backend.vision", sys.modules[__name__])
+    try:
+        import backend
+        setattr(backend, "vision", sys.modules[__name__])
+    except ImportError:
+        pass
+
 import io
 import os
 import time
@@ -16,9 +28,14 @@ import logging
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
+
 from PIL import Image
 
-from schemas import DiseasePrediction
+try:
+    from backend.schemas import DiseasePrediction
+except ImportError:
+    from schemas import DiseasePrediction
+
 
 logger = logging.getLogger("smart_farming.vision")
 

@@ -73,6 +73,14 @@ export interface CropScanAnalysis {
   bbox?: number[];
   isReal?: boolean;
   inferenceTimeMs?: number;
+  // Multimodal Unified fields
+  isUnified?: boolean;
+  sensorAvailable?: boolean;
+  sensorTelemetry?: BackendSensorTelemetry | null;
+  decision?: BackendDecisionReport | null;
+  weatherAvailable?: boolean;
+  weather?: BackendWeatherData | null;
+  insights?: string[];
 }
 
 export interface DiseasePrediction {
@@ -88,6 +96,64 @@ export interface VisionPredictionResponse {
   predictions: DiseasePrediction[];
   count: number;
   inference_time_ms: number;
+}
+
+export interface BackendSensorTelemetry {
+  sensor_id: string;
+  soil_moisture: number;
+  temperature: number;
+  humidity: number;
+  battery_voltage?: number | null;
+  rain_level?: number | null;
+  timestamp: string;
+}
+
+export interface BackendDecisionReport {
+  sensor_id: string;
+  timestamp: string;
+  soil_moisture_status: 'LOW' | 'OPTIMAL' | 'HIGH';
+  irrigation_action: 'IRRIGATE_SOON' | 'NO_IRRIGATION_NEEDED' | 'OVERWATERING_WARNING' | 'DELAY_IRRIGATION_RAIN_DETECTED';
+  action_category: 'ACTION_REQUIRED' | 'RECOMMENDED' | 'NORMAL';
+  action_title: string;
+  action_subtitle: string;
+  primary_action: string;
+  water_stress_level: 'LOW' | 'MEDIUM' | 'HIGH';
+  heat_stress_level: 'LOW' | 'MEDIUM' | 'HIGH';
+  disease_risk_level: 'LOW' | 'MEDIUM' | 'HIGH';
+  reasons: string[];
+}
+
+export interface BackendWeatherForecastItem {
+  time: string;
+  temp_max: number;
+  temp_min: number;
+  condition: string;
+  rain_probability: number;
+}
+
+export interface BackendWeatherData {
+  location: string;
+  temperature: number;
+  humidity: number;
+  condition: string;
+  rain_probability: number;
+  wind_speed_kmh?: number | null;
+  is_rain_forecasted: boolean;
+  forecast: BackendWeatherForecastItem[];
+  source: string;
+  timestamp: string;
+}
+
+export interface UnifiedFarmAnalysisResponse {
+  status: string;
+  timestamp: string;
+  vision: VisionPredictionResponse;
+  sensor_available: boolean;
+  sensor_telemetry?: BackendSensorTelemetry | null;
+  decision?: BackendDecisionReport | null;
+  weather_available: boolean;
+  weather?: BackendWeatherData | null;
+  insights: string[];
 }
 
 export interface FarmAlert {

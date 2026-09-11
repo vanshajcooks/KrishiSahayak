@@ -4,7 +4,7 @@
  * Can point to Raspberry Pi field gateway without any code modifications.
  */
 
-import { FarmState, MoistureLevel, RiskLevel, HealthState, VisionPredictionResponse } from '@/types/farm';
+import { FarmState, MoistureLevel, RiskLevel, HealthState, VisionPredictionResponse, UnifiedFarmAnalysisResponse } from '@/types/farm';
 
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
@@ -305,4 +305,76 @@ export async function uploadLeafForDiseasePrediction(
     };
   }
 }
+
+/**
+ * Executes multimodal farm analysis via POST /api/v1/farm/analyze.
+ * Combines YOLO crop disease vision inference with localized IoT sensor telemetry
+ * and live weather forecasts into integrated agronomic intelligence.
+ */
+export async function analyzeUnifiedFarm(
+  file: File | Blob,
+  sensorId?: string,
+  confidenceThreshold: number = 0.25
+): Promise<{
+  success: boolean;
+  data?: UnifiedFarmAnalysisResponse;
+  error?: string;
+  isOffline?: boolean;
+}> {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (sensorId) {
+      formData.append('sensor_id', sensorId);
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s timeout for multimodal processing
+
+    let url = `${API_BASE_URL}/api/v1/farm/analyze?conf=${confidenceThreshold}`;
+    if (sensorId) {
+      url += `&sensor_id=${encodeURIComponent(sensorId)}`;
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      let detail = `Gateway error HTTP ${res.status}`;
+      try {
+        const errorJson = await res.json();
+        if (errorJson.detail) {
+          detail = errorJson.detail;
+        }
+      } catch {
+        // Fall back to status text
+      }
+      return { success: false, error: detail };
+    }
+
+    const data: UnifiedFarmAnalysisResponse = await res.json();
+    return { success: true, data };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network connection failed';
+    const isOffline =
+      message.includes('fetch') ||
+      message.includes('abort') ||
+      message.includes('Failed to fetch') ||
+      message.includes('NetworkError') ||
+      message.includes('connection');
+    return {
+      success: false,
+      isOffline,
+      error: isOffline
+        ? 'Backend gateway offline or unreachable. Ensure the FastAPI server is running.'
+        : message,
+    };
+  }
+}
+
 

@@ -13,9 +13,21 @@ import {
   Cpu,
   Clock,
   Scan,
+  Droplets,
+  CloudSun,
+  CloudRain,
+  Thermometer,
+  Layers,
 } from 'lucide-react';
-import { CropScanAnalysis, DiseasePrediction } from '@/types/farm';
-import { uploadLeafForDiseasePrediction } from '@/services/api';
+import {
+  CropScanAnalysis,
+  DiseasePrediction,
+  UnifiedFarmAnalysisResponse,
+  BackendSensorTelemetry,
+  BackendDecisionReport,
+  BackendWeatherData,
+} from '@/types/farm';
+import { analyzeUnifiedFarm } from '@/services/api';
 
 interface ScanViewProps {
   onBackToHome: () => void;
@@ -39,9 +51,43 @@ function formatConditionName(condition: string): string {
     .join(' ');
 }
 
-function buildAnalysisResultFromPrediction(
+function formatIrrigationStatus(
+  action?: string,
+  decision?: BackendDecisionReport | null
+): { text: string; colorClass: string } {
+  if (!action) {
+    if (decision?.primary_action) {
+      return { text: decision.primary_action, colorClass: 'text-slate-800 font-semibold' };
+    }
+    return { text: 'Not Evaluated', colorClass: 'text-slate-500 font-medium' };
+  }
+
+  switch (action) {
+    case 'IRRIGATE_SOON':
+      return { text: 'Yes — Irrigate Soon', colorClass: 'text-rose-700 font-bold' };
+    case 'NO_IRRIGATION_NEEDED':
+      return { text: 'No — Moisture Optimal', colorClass: 'text-emerald-700 font-bold' };
+    case 'DELAY_IRRIGATION_RAIN_DETECTED':
+      return { text: 'Paused — Rain Detected', colorClass: 'text-blue-700 font-bold' };
+    case 'OVERWATERING_WARNING':
+      return { text: 'No — High Moisture', colorClass: 'text-amber-700 font-bold' };
+    default:
+      return {
+        text: decision?.primary_action || action.replace(/_/g, ' '),
+        colorClass: 'text-slate-800 font-semibold',
+      };
+  }
+}
+
+function buildAnalysisResultFromUnified(
   pred: DiseasePrediction,
-  inferenceTimeMs?: number
+  inferenceTimeMs?: number,
+  sensorAvailable: boolean = false,
+  sensorTelemetry?: BackendSensorTelemetry | null,
+  decision?: BackendDecisionReport | null,
+  weatherAvailable: boolean = false,
+  weather?: BackendWeatherData | null,
+  insights: string[] = []
 ): CropScanAnalysis {
   const cropTitle = formatCropName(pred.crop);
   const conditionTitle = formatConditionName(pred.condition);
@@ -53,7 +99,9 @@ function buildAnalysisResultFromPrediction(
       confidence: confPercent,
       severity: 'None',
       findings: `High confidence (${confPercent}%) healthy leaf sample. Chlorophyll distribution and leaf structure appear normal.`,
-      recommendedAction: 'Continue standard agronomic monitoring and scheduled irrigation.',
+      recommendedAction:
+        decision?.primary_action ||
+        'Continue standard agronomic monitoring and scheduled irrigation.',
       safePractices: [
         'Maintain balanced watering and soil nutrient management.',
         'Inspect the lower canopy weekly for any early pest or foliar stress.',
@@ -63,7 +111,14 @@ function buildAnalysisResultFromPrediction(
       condition: pred.condition,
       bbox: pred.bbox,
       isReal: true,
+      isUnified: true,
       inferenceTimeMs,
+      sensorAvailable,
+      sensorTelemetry,
+      decision,
+      weatherAvailable,
+      weather,
+      insights,
     };
   }
 
@@ -92,18 +147,30 @@ function buildAnalysisResultFromPrediction(
     'Consult your local Krishi Vigyan Kendra (KVK) or agricultural extension officer for approved crop-management options.',
   ];
 
+  let recommendedAction = `Inspect nearby ${cropTitle.toLowerCase()} plants and consult agricultural extension officer for approved disease management.`;
+  if (decision?.primary_action) {
+    recommendedAction = `${decision.primary_action} Meanwhile, quarantine affected ${cropTitle.toLowerCase()} foliage.`;
+  }
+
   return {
     diseaseName: `${cropTitle}: ${conditionTitle}`,
     confidence: confPercent,
     severity,
     findings,
-    recommendedAction: `Inspect nearby ${cropTitle.toLowerCase()} plants and consult agricultural extension officer for approved disease management.`,
+    recommendedAction,
     safePractices: practices,
     crop: pred.crop,
     condition: pred.condition,
     bbox: pred.bbox,
     isReal: true,
+    isUnified: true,
     inferenceTimeMs,
+    sensorAvailable,
+    sensorTelemetry,
+    decision,
+    weatherAvailable,
+    weather,
+    insights,
   };
 }
 
@@ -177,30 +244,45 @@ export const ScanView: React.FC<ScanViewProps> = ({
     setIsOfflineError(false);
 
     try {
-      const res = await uploadLeafForDiseasePrediction(selectedFile, 0.25);
+      // Call the unified multimodal analysis endpoint
+      const res = await analyzeUnifiedFarm(selectedFile, undefined, 0.25);
 
       if (!res.success) {
         setIsOfflineError(Boolean(res.isOffline));
         setErrorMessage(
-          res.error || 'Failed to connect to the vision analysis service. Please check your backend connection.'
+          res.error || 'Failed to connect to the farm analysis service. Please check your backend connection.'
         );
         setStage('error');
         return;
       }
 
       if (res.data) {
-        const preds = res.data.predictions || [];
+        const unified = res.data;
+        const preds = unified.vision?.predictions || [];
         setDetectedPredictions(preds);
-        setInferenceTime(res.data.inference_time_ms);
+        setInferenceTime(unified.vision?.inference_time_ms ?? null);
         setIsLiveScan(true);
 
+        const sensorTel = unified.sensor_telemetry;
+        const dec = unified.decision;
+        const weatherTel = unified.weather;
+        const insightsList = unified.insights || [];
+
         if (preds.length > 0) {
-          // Sort by highest confidence
           const top = [...preds].sort((a, b) => b.confidence - a.confidence)[0];
-          const formatted = buildAnalysisResultFromPrediction(top, res.data.inference_time_ms);
+          const formatted = buildAnalysisResultFromUnified(
+            top,
+            unified.vision.inference_time_ms,
+            unified.sensor_available,
+            sensorTel,
+            dec,
+            unified.weather_available,
+            weatherTel,
+            insightsList
+          );
           setAnalysisResult(formatted);
         } else {
-          // Zero detections above confidence threshold
+          // Zero detections
           setAnalysisResult({
             diseaseName: 'Healthy Leaf / No Disease Symptoms Detected',
             confidence: 95,
@@ -208,6 +290,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
             findings:
               'The vision model analyzed the leaf image and detected no foliar disease patterns or lesions above the confidence threshold.',
             recommendedAction:
+              dec?.primary_action ||
               'Foliage appears clean and healthy. Continue regular irrigation and scheduled monitoring.',
             safePractices: [
               'Ensure leaf is well-lit and centered when capturing scans.',
@@ -216,7 +299,14 @@ export const ScanView: React.FC<ScanViewProps> = ({
               'Consult local agricultural extension officers if unusual wilting appears.',
             ],
             isReal: true,
-            inferenceTimeMs: res.data.inference_time_ms,
+            isUnified: true,
+            inferenceTimeMs: unified.vision.inference_time_ms,
+            sensorAvailable: unified.sensor_available,
+            sensorTelemetry: sensorTel,
+            decision: dec,
+            weatherAvailable: unified.weather_available,
+            weather: weatherTel,
+            insights: insightsList,
           });
         }
         setStage('result');
@@ -261,16 +351,16 @@ export const ScanView: React.FC<ScanViewProps> = ({
       {/* View Header */}
       <div className="bg-white rounded-2xl p-4 md:p-5 border border-slate-200 shadow-sm flex items-center justify-between">
         <div>
-          <h2 className="text-base md:text-lg font-bold text-slate-900">Scan Your Crop</h2>
+          <h2 className="text-base md:text-lg font-bold text-slate-900">Crop Health & Field Analysis</h2>
           <p className="text-xs md:text-sm text-slate-600 mt-0.5">
-            Take a clear leaf photo to check for possible disease symptoms with the YOLO vision model.
+            Capture a leaf photograph for unified analysis combining YOLO disease detection, field sensors, and weather.
           </p>
         </div>
 
         {isLiveScan ? (
           <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1">
             <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-            <span>Live Vision Inference</span>
+            <span>Live Unified Analysis</span>
           </span>
         ) : (
           <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full border border-amber-200 flex items-center gap-1">
@@ -292,7 +382,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
               <span className="text-[10px] font-semibold text-slate-400">
                 {stage === 'result'
                   ? isLiveScan
-                    ? 'YOLO Analysis Completed'
+                    ? 'Unified Analysis Completed'
                     : 'Scan Completed'
                   : stage === 'analyzing'
                   ? 'Analyzing...'
@@ -338,24 +428,24 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
                   {/* Scanning active animation overlay */}
                   {stage === 'analyzing' && (
-                    <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm flex flex-col items-center justify-center p-4 text-white z-20">
+                    <div className="absolute inset-0 bg-slate-950/75 backdrop-blur-sm flex flex-col items-center justify-center p-4 text-white z-20">
                       <div className="w-12 h-12 rounded-full border-4 border-farm-300 border-t-farm-600 animate-spin mb-3" />
                       <div className="flex items-center gap-1.5 text-xs font-black tracking-wider text-farm-300 uppercase">
                         <Scan className="w-4 h-4 animate-pulse" />
-                        <span>Running YOLO11 Model</span>
+                        <span>Running Multimodal Analysis</span>
                       </div>
                       <p className="text-[11px] text-slate-300 mt-1 font-medium">
-                        Checking for foliar diseases and lesions...
+                        Evaluating YOLO model, soil moisture & weather telemetry...
                       </p>
                     </div>
                   )}
 
                   {/* Result completed badge overlay */}
                   {stage === 'result' && isLiveScan && (
-                    <div className="absolute bottom-2 left-2 right-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700/80 rounded-lg px-2.5 py-1.5 flex items-center justify-between text-[11px] text-white z-10">
+                    <div className="absolute bottom-2 left-2 right-2 bg-slate-900/85 backdrop-blur-sm border border-slate-700/80 rounded-lg px-2.5 py-1.5 flex items-center justify-between text-[11px] text-white z-10">
                       <span className="flex items-center gap-1 text-emerald-400 font-semibold">
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        {analysisResult.condition ? formatConditionName(analysisResult.condition) : 'Scanned'}
+                        {analysisResult.condition ? formatConditionName(analysisResult.condition) : 'Analyzed'}
                       </span>
                       {inferenceTime && (
                         <span className="text-slate-400 font-mono text-[10px]">
@@ -386,7 +476,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Choose Capture Method</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Take a new leaf photo using your device camera or upload a field photograph for YOLO detection.
+                  Take a new leaf photo using your device camera or upload a field photograph for unified analysis.
                 </p>
               </div>
 
@@ -411,10 +501,10 @@ export const ScanView: React.FC<ScanViewProps> = ({
               </div>
 
               <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 text-xs text-slate-600 space-y-1.5">
-                <span className="font-bold text-slate-800 block">How to obtain an accurate vision result:</span>
-                <p className="leading-relaxed">1. Position a single diseased or target leaf in the frame.</p>
-                <p className="leading-relaxed">2. Hold the camera steady to avoid motion blur.</p>
-                <p className="leading-relaxed">3. Make sure visible lesions, spots, or yellowing are in clear focus.</p>
+                <span className="font-bold text-slate-800 block">How unified analysis works:</span>
+                <p className="leading-relaxed">1. Centered leaf photo is examined with the YOLO crop-disease model.</p>
+                <p className="leading-relaxed">2. Soil moisture & rain readings from your field node are retrieved.</p>
+                <p className="leading-relaxed">3. Local weather forecasts correlate disease risk with upcoming conditions.</p>
               </div>
             </div>
           )}
@@ -425,7 +515,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Review Leaf Photo</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Confirm the leaf spots and details are clearly visible before running YOLO diagnosis.
+                  Confirm the leaf spots and details are clearly visible before running unified diagnosis.
                 </p>
               </div>
 
@@ -445,7 +535,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   className="flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-farm-700 hover:bg-farm-800 text-white font-bold text-xs md:text-sm active:scale-95 transition shadow-sm"
                 >
                   <Scan className="w-4 h-4" />
-                  <span>Analyze Leaf</span>
+                  <span>Analyze Leaf & Farm</span>
                 </button>
 
                 <button
@@ -463,13 +553,13 @@ export const ScanView: React.FC<ScanViewProps> = ({
           {stage === 'analyzing' && (
             <div className="bg-white rounded-2xl p-8 border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center space-y-3">
               <div className="w-14 h-14 rounded-full border-4 border-farm-200 border-t-farm-700 animate-spin" />
-              <h3 className="text-sm font-bold text-slate-900">Running Disease Inference...</h3>
+              <h3 className="text-sm font-bold text-slate-900">Running Multimodal Farm Analysis...</h3>
               <p className="text-xs text-slate-500 max-w-sm leading-relaxed">
-                Evaluating leaf discoloration, lesion patterns, and foliar stress against the YOLO11 model.
+                Correlating leaf vision patterns with localized soil moisture, ambient temperature, and weather forecasts.
               </p>
               <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
                 <Cpu className="w-3.5 h-3.5 text-farm-600" />
-                <span>POST /api/v1/vision/predict</span>
+                <span>POST /api/v1/farm/analyze</span>
               </div>
             </div>
           )}
@@ -491,8 +581,8 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
                     {isOfflineError
-                      ? 'Cannot reach the vision inference server at the configured backend address.'
-                      : 'The vision service encountered an error while analyzing this leaf image.'}
+                      ? 'Cannot reach the farm analysis service at the configured backend address.'
+                      : 'The analysis service encountered an error while processing this request.'}
                   </p>
                 </div>
               </div>
@@ -501,7 +591,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 <div className="flex items-center justify-between text-slate-500 text-[11px]">
                   <span>Backend Endpoint:</span>
                   <code className="font-mono text-slate-700 bg-slate-200/70 px-1.5 py-0.5 rounded">
-                    POST /api/v1/vision/predict
+                    POST /api/v1/farm/analyze
                   </code>
                 </div>
                 <div className="text-slate-700 leading-relaxed font-medium">
@@ -537,12 +627,12 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
           {/* STAGE 4: RESULT STATE */}
           {stage === 'result' && (
-            <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3.5">
+            <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
               {/* Result Header Badge */}
               <div className="flex items-center justify-between">
                 {isLiveScan ? (
                   <span
-                    className={`text-[11px] font-bold px-2.5 py-1 rounded-full border flex items-center gap-1 ${
+                    className={`text-[11px] font-bold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${
                       analysisResult.severity === 'None'
                         ? 'bg-emerald-100 text-emerald-900 border-emerald-200'
                         : 'bg-rose-100 text-rose-900 border-rose-200'
@@ -550,26 +640,27 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   >
                     {analysisResult.severity === 'None' ? (
                       <>
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                        <span>Healthy Leaf (Live YOLO Inference)</span>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Live Unified Analysis</span>
                       </>
                     ) : (
                       <>
-                        <AlertOctagon className="w-3 h-3 text-rose-600" />
-                        <span>Disease Detected (Live YOLO Inference)</span>
+                        <AlertOctagon className="w-3.5 h-3.5 text-rose-600" />
+                        <span>Live Unified Analysis</span>
                       </>
                     )}
                   </span>
                 ) : (
-                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-rose-100 text-rose-900 border border-rose-200">
-                    Possible Disease Detected (Simulated)
+                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-200 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Simulated Data</span>
                   </span>
                 )}
 
                 <span className="text-xs font-bold text-slate-500">
                   Confidence:{' '}
                   <span className="text-slate-900 font-black">
-                    {analysisResult.confidence}%{isLiveScan ? '' : ' (Simulated)'}
+                    {analysisResult.confidence}%{isLiveScan ? ' (Live YOLO)' : ' (Simulated)'}
                   </span>
                 </span>
               </div>
@@ -615,43 +706,154 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </div>
               </div>
 
-              {/* Real Model Telemetry Bar (only for live scan) */}
-              {isLiveScan && (
-                <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-200 grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-slate-600">
-                  <div className="flex items-center gap-1.5">
-                    <Cpu className="w-3.5 h-3.5 text-farm-600" />
-                    <span>
-                      Model: <span className="font-semibold text-slate-800">YOLO11n</span>
+              {/* MULTIMODAL TELEMETRY GRID: Field Sensors & Live Weather */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Panel 1: Field Sensor Telemetry */}
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Droplets className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Field Sensors</span>
+                    </span>
+                    <span
+                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                        analysisResult.sensorAvailable
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {analysisResult.sensorAvailable ? 'Online' : 'No Sensor Data'}
                     </span>
                   </div>
-                  {inferenceTime && (
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-farm-600" />
-                      <span>
-                        Latency: <span className="font-semibold text-slate-800">{inferenceTime} ms</span>
-                      </span>
+
+                  {analysisResult.sensorAvailable && analysisResult.sensorTelemetry ? (
+                    <div className="space-y-1 text-slate-600">
+                      <div className="flex justify-between">
+                        <span>Soil Moisture:</span>
+                        <span className="font-bold text-slate-900">
+                          {analysisResult.sensorTelemetry.soil_moisture.toFixed(1)}% (
+                          {analysisResult.decision?.soil_moisture_status || 'OPTIMAL'})
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Temperature / Humidity:</span>
+                        <span className="font-semibold text-slate-800">
+                          {analysisResult.sensorTelemetry.temperature.toFixed(1)}°C •{' '}
+                          {analysisResult.sensorTelemetry.humidity.toFixed(0)}%
+                        </span>
+                      </div>
+                      {analysisResult.sensorTelemetry.rain_level != null && (
+                        <div className="flex justify-between text-[11px]">
+                          <span>Rain Sensor:</span>
+                          <span className="font-semibold text-slate-800">
+                            {analysisResult.sensorTelemetry.rain_level.toFixed(0)}%
+                          </span>
+                        </div>
+                      )}
+                      {analysisResult.decision ? (
+                        <div className="pt-1 border-t border-slate-200/80 space-y-0.5">
+                          <div className="flex justify-between items-center text-[11px]">
+                            <span>Irrigation Needed:</span>
+                            <span
+                              className={
+                                formatIrrigationStatus(
+                                  analysisResult.decision.irrigation_action,
+                                  analysisResult.decision
+                                ).colorClass
+                              }
+                            >
+                              {
+                                formatIrrigationStatus(
+                                  analysisResult.decision.irrigation_action,
+                                  analysisResult.decision
+                                ).text
+                              }
+                            </span>
+                          </div>
+                          {analysisResult.decision.primary_action && (
+                            <p className="text-[10px] text-slate-500 leading-tight">
+                              {analysisResult.decision.primary_action}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex justify-between items-center pt-1 border-t border-slate-200/80 text-[11px]">
+                          <span>Irrigation Needed:</span>
+                          <span className="text-slate-500 font-medium">Pending Data</span>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  {detectedPredictions.length > 0 && (
-                    <div className="flex items-center gap-1.5 col-span-2 sm:col-span-1">
-                      <Scan className="w-3.5 h-3.5 text-farm-600" />
-                      <span>
-                        Detections: <span className="font-semibold text-slate-800">{detectedPredictions.length}</span>
-                      </span>
-                    </div>
+                  ) : (
+                    <p className="text-[11px] text-slate-500 italic">
+                      No sensor telemetry ingested for this field. Diagnosis based on leaf pathology.
+                    </p>
                   )}
                 </div>
-              )}
 
-              {/* What We Found */}
-              <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block mb-1">
-                  What we found:
-                </span>
-                <p className="text-xs md:text-sm text-slate-800 leading-relaxed font-medium">
-                  "{analysisResult.findings}"
-                </p>
+                {/* Panel 2: Live Weather Telemetry */}
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <CloudSun className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Local Weather</span>
+                    </span>
+                    <span
+                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                        analysisResult.weatherAvailable
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {analysisResult.weatherAvailable ? 'Live Telemetry' : 'Offline'}
+                    </span>
+                  </div>
+
+                  {analysisResult.weatherAvailable && analysisResult.weather ? (
+                    <div className="space-y-1 text-slate-600">
+                      <div className="flex justify-between">
+                        <span className="truncate max-w-[130px]">{analysisResult.weather.location}:</span>
+                        <span className="font-bold text-slate-900">
+                          {analysisResult.weather.condition} • {analysisResult.weather.temperature.toFixed(1)}°C
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Precipitation Chance:</span>
+                        <span className="font-semibold text-slate-800">
+                          {analysisResult.weather.rain_probability.toFixed(0)}%
+                        </span>
+                      </div>
+                      {analysisResult.weather.is_rain_forecasted && (
+                        <div className="pt-1 text-[11px] text-blue-800 font-semibold flex items-center gap-1">
+                          <CloudRain className="w-3 h-3 text-blue-600" />
+                          <span>Rain forecasted in near term</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-slate-500 italic">
+                      Weather service not configured or unreachable. Analysis operates gracefully.
+                    </p>
+                  )}
+                </div>
               </div>
+
+              {/* CROSS-MODAL AGRONOMIC INSIGHTS */}
+              {analysisResult.insights && analysisResult.insights.length > 0 && (
+                <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-xl p-3.5 space-y-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Cross-Modal Agronomic Insights:</span>
+                  </span>
+                  <ul className="space-y-1.5 text-xs text-slate-700 leading-relaxed font-medium">
+                    {analysisResult.insights.map((insight, idx) => (
+                      <li key={idx} className="flex items-start gap-2">
+                        <span className="text-emerald-700 font-bold mt-0.5">•</span>
+                        <span>{insight}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Recommended Action */}
               <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-200">

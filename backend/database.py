@@ -3,6 +3,18 @@ Smart Farming Assistant — SQLite Database Layer (SIH 26180)
 Provides lightweight, local, offline-first telemetry persistence for Raspberry Pi / local deployment.
 """
 
+import sys
+
+if __name__ == "backend.database":
+    sys.modules.setdefault("database", sys.modules[__name__])
+elif __name__ == "database":
+    sys.modules.setdefault("backend.database", sys.modules[__name__])
+    try:
+        import backend
+        setattr(backend, "database", sys.modules[__name__])
+    except ImportError:
+        pass
+
 import os
 import sqlite3
 import logging
@@ -10,7 +22,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Union
 
-from schemas import SensorReading
+
+try:
+    from backend.schemas import SensorReading
+except ImportError:
+    from schemas import SensorReading
+
 
 logger = logging.getLogger("smart_farming.database")
 
