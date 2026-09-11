@@ -64,10 +64,30 @@ export interface RecommendedAction {
 export interface CropScanAnalysis {
   diseaseName: string;
   confidence: number; // e.g. 93%
-  severity: 'Mild' | 'Moderate' | 'Severe';
+  severity: 'Mild' | 'Moderate' | 'Severe' | 'None';
   findings: string;
   recommendedAction: string;
   safePractices: string[];
+  crop?: string;
+  condition?: string;
+  bbox?: number[];
+  isReal?: boolean;
+  inferenceTimeMs?: number;
+}
+
+export interface DiseasePrediction {
+  crop: string;
+  condition: string;
+  confidence: number;
+  bbox: number[];
+}
+
+export interface VisionPredictionResponse {
+  status: string;
+  model: string;
+  predictions: DiseasePrediction[];
+  count: number;
+  inference_time_ms: number;
 }
 
 export interface FarmAlert {

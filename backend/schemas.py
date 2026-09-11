@@ -133,3 +133,21 @@ class DecisionReport(BaseModel):
     disease_risk_level: RiskLevel
     reasons: List[str]
 
+
+class DiseasePrediction(BaseModel):
+    """Individual crop disease or health detection."""
+    crop: str = Field(..., description="Crop type (e.g. 'tomato', 'potato', 'corn', 'apple')")
+    condition: str = Field(..., description="Condition or disease name (e.g. 'early_blight', 'late_blight', 'healthy')")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0")
+    bbox: List[float] = Field(..., min_length=4, max_length=4, description="Bounding box [x1, y1, x2, y2]")
+
+
+class VisionPredictionResponse(BaseModel):
+    """Response returned by the crop disease vision inference endpoint."""
+    status: str = Field(default="success", description="Status code string")
+    model: str = Field(default="yolo11n-crop-disease", description="Model identifier")
+    predictions: List[DiseasePrediction] = Field(default_factory=list, description="List of detected disease instances")
+    count: int = Field(..., description="Number of detected instances")
+    inference_time_ms: float = Field(..., description="Inference execution time in milliseconds")
+
+

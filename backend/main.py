@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import get_db_path, get_latest_reading, init_db, insert_reading
@@ -19,7 +19,9 @@ from schemas import (
     LatestSensorResponse,
     SensorIngestResponse,
     SensorReading,
+    VisionPredictionResponse,
 )
+from vision import load_model, predict_image
 
 logger = logging.getLogger("smart_farming.backend")
 
@@ -28,9 +30,13 @@ logger = logging.getLogger("smart_farming.backend")
 async def lifespan(app: FastAPI):
     """
     Application lifespan handler.
-    Initializes the SQLite database and tables upon startup.
+    Initializes the SQLite database, tables, and pre-warms the YOLO vision model upon startup.
     """
     init_db()
+    try:
+        load_model()
+    except Exception as exc:
+        logger.warning("YOLO vision model could not be pre-loaded at startup: %s", exc)
     yield
 
 
@@ -183,6 +189,76 @@ def get_decision_recommendations(
             )
 
     return evaluate_reading(reading)
+
+
+@app.post(
+    "/api/v1/vision/predict",
+    response_model=VisionPredictionResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Vision AI"],
+    summary="Predict Crop Disease from Leaf Image",
+)
+async def predict_crop_disease(
+    file: UploadFile = File(..., description="Uploaded crop leaf image (JPEG, PNG)"),
+    conf: float = Query(default=0.25, ge=0.05, le=1.0, description="Minimum confidence threshold"),
+) -> VisionPredictionResponse:
+    """
+    Runs YOLO11 crop-disease detection on an uploaded leaf photograph.
+    Returns detected crops, conditions (disease or healthy), confidence, bounding boxes,
+    count, and inference execution time in milliseconds.
+    """
+    # 1. Validate content-type if provided
+    if file.content_type and not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Uploaded file content-type '{file.content_type}' is not an image",
+        )
+
+    # 2. Read file bytes
+    try:
+        image_bytes = await file.read()
+    except Exception as exc:
+        logger.error("Failed to read uploaded image file: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to read uploaded image file",
+        )
+
+    if not image_bytes or len(image_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded image file is empty",
+        )
+
+    # 3. Execute YOLO vision inference
+    try:
+        predictions, inference_time_ms = predict_image(image_bytes=image_bytes, conf=conf)
+    except FileNotFoundError as exc:
+        logger.error("Vision model weights missing: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="YOLO vision model weights not found",
+        )
+    except ValueError as exc:
+        logger.warning("Invalid image file uploaded: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except Exception as exc:
+        logger.error("Unexpected error during vision inference: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while processing image inference",
+        )
+
+    return VisionPredictionResponse(
+        status="success",
+        model="yolo11n-crop-disease",
+        predictions=predictions,
+        count=len(predictions),
+        inference_time_ms=inference_time_ms,
+    )
 
 
 if __name__ == "__main__":

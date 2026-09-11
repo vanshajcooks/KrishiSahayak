@@ -11,3 +11,9 @@ pydantic>=2.6.0
 # Testing & HTTP Client
 pytest>=8.0.0
 httpx>=0.27.0
+
+# Vision AI Inference & File Uploads
+python-multipart>=0.0.9
+ultralytics>=8.0.0
+Pillow>=10.0.0
+

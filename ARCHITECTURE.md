@@ -23,7 +23,7 @@ The Smart Farming Assistant is engineered to provide actionable agricultural int
 
 ```mermaid
 flowchart TD
-    subgraph FieldNode["Field Node (Sensor Controller)"]
+    subgraph FieldNode["Field Node (Sensor Co ntroller)"]
         ESP["ESP32 Microcontroller"]
         SMS["Capacitive Soil Moisture Sensor"]
         DHT["DHT22 (Temp & Humidity Sensor)"]

@@ -219,6 +219,7 @@ export default function App() {
                   onBackToHome={() => setActiveTab('home')}
                   onViewAdvice={() => setActiveTab('irrigation')}
                   presetScan={activeState.recentScan}
+                  isRealData={activeState.isRealData}
                 />
               )}
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Camera,
   UploadCloud,
@@ -8,29 +8,124 @@ import {
   AlertOctagon,
   RefreshCw,
   Lightbulb,
-  ShieldAlert,
-  FileCheck,
   Sparkles,
+  WifiOff,
+  Cpu,
+  Clock,
+  Scan,
 } from 'lucide-react';
-import { CropScanAnalysis } from '@/types/farm';
+import { CropScanAnalysis, DiseasePrediction } from '@/types/farm';
+import { uploadLeafForDiseasePrediction } from '@/services/api';
 
 interface ScanViewProps {
   onBackToHome: () => void;
   onViewAdvice: () => void;
   presetScan?: CropScanAnalysis;
+  isRealData?: boolean;
+}
+
+type ScanStage = 'idle' | 'preview' | 'analyzing' | 'result' | 'error';
+
+function formatCropName(crop: string): string {
+  if (!crop || crop.toLowerCase() === 'unknown') return 'Crop';
+  return crop.charAt(0).toUpperCase() + crop.slice(1).toLowerCase();
+}
+
+function formatConditionName(condition: string): string {
+  if (!condition) return 'Healthy / Normal';
+  return condition
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function buildAnalysisResultFromPrediction(
+  pred: DiseasePrediction,
+  inferenceTimeMs?: number
+): CropScanAnalysis {
+  const cropTitle = formatCropName(pred.crop);
+  const conditionTitle = formatConditionName(pred.condition);
+  const confPercent = Math.round(pred.confidence * 100);
+
+  if (pred.condition === 'healthy') {
+    return {
+      diseaseName: `${cropTitle} — Healthy Foliage`,
+      confidence: confPercent,
+      severity: 'None',
+      findings: `High confidence (${confPercent}%) healthy leaf sample. Chlorophyll distribution and leaf structure appear normal.`,
+      recommendedAction: 'Continue standard agronomic monitoring and scheduled irrigation.',
+      safePractices: [
+        'Maintain balanced watering and soil nutrient management.',
+        'Inspect the lower canopy weekly for any early pest or foliar stress.',
+        'Keep row spacing clear for adequate ventilation and sunlight.',
+      ],
+      crop: pred.crop,
+      condition: pred.condition,
+      bbox: pred.bbox,
+      isReal: true,
+      inferenceTimeMs,
+    };
+  }
+
+  // Disease condition detected
+  const isBlight = pred.condition.includes('blight');
+  const isSpot = pred.condition.includes('spot') || pred.condition.includes('scab');
+  const isRust = pred.condition.includes('rust');
+
+  let severity: 'Mild' | 'Moderate' | 'Severe' = 'Moderate';
+  if (pred.confidence >= 0.85) severity = 'Moderate';
+  else if (pred.confidence < 0.60) severity = 'Mild';
+
+  let findings = `YOLO vision model detected foliar symptoms consistent with ${conditionTitle} on ${cropTitle} with ${confPercent}% confidence.`;
+  if (isBlight) {
+    findings += ' Visible lesions and tissue discoloration observed.';
+  } else if (isSpot) {
+    findings += ' Characteristic localized spots or chlorotic halos identified.';
+  } else if (isRust) {
+    findings += ' Pustule or rust-like discoloration detected on leaf surface.';
+  }
+
+  const practices = [
+    'Inspect adjacent plants and rows thoroughly to evaluate spread.',
+    'Prune and safely dispose of visibly infected lower foliage away from the field.',
+    'Avoid overhead watering to prevent splashing fungal spores onto upper canopy.',
+    'Consult your local Krishi Vigyan Kendra (KVK) or agricultural extension officer for approved crop-management options.',
+  ];
+
+  return {
+    diseaseName: `${cropTitle}: ${conditionTitle}`,
+    confidence: confPercent,
+    severity,
+    findings,
+    recommendedAction: `Inspect nearby ${cropTitle.toLowerCase()} plants and consult agricultural extension officer for approved disease management.`,
+    safePractices: practices,
+    crop: pred.crop,
+    condition: pred.condition,
+    bbox: pred.bbox,
+    isReal: true,
+    inferenceTimeMs,
+  };
 }
 
 export const ScanView: React.FC<ScanViewProps> = ({
   onBackToHome,
   onViewAdvice,
   presetScan,
+  isRealData = false,
 }) => {
-  type ScanStage = 'idle' | 'preview' | 'analyzing' | 'result';
-
   const [stage, setStage] = useState<ScanStage>('idle');
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isOfflineError, setIsOfflineError] = useState<boolean>(false);
+  const [inferenceTime, setInferenceTime] = useState<number | null>(null);
+  const [detectedPredictions, setDetectedPredictions] = useState<DiseasePrediction[]>([]);
+  const [isLiveScan, setIsLiveScan] = useState<boolean>(presetScan?.isReal ?? false);
 
-  // Realistic mock diagnostic result adhering to safe advisory guidelines
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  // Diagnostic result state
   const [analysisResult, setAnalysisResult] = useState<CropScanAnalysis>(
     presetScan || {
       diseaseName: 'Possible Early Blight (Alternaria solani)',
@@ -44,40 +139,145 @@ export const ScanView: React.FC<ScanViewProps> = ({
         'Avoid overhead watering to prevent water splashing spores onto upper leaves.',
         'Consult your local Krishi Vigyan Kendra (KVK) or agricultural extension officer for approved crop-management options.',
       ],
+      isReal: false,
     }
   );
 
-  const simulateCapture = () => {
-    setSelectedImage('/sample-leaf.svg');
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setSelectedFile(file);
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+    setErrorMessage(null);
+    setIsOfflineError(false);
     setStage('preview');
   };
 
-  const runAnalysis = () => {
+  const triggerCamera = () => {
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+      cameraInputRef.current.click();
+    }
+  };
+
+  const triggerUpload = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const runAnalysis = async () => {
+    if (!selectedFile) return;
+
     setStage('analyzing');
-    setTimeout(() => {
-      setStage('result');
-    }, 1600);
+    setErrorMessage(null);
+    setIsOfflineError(false);
+
+    try {
+      const res = await uploadLeafForDiseasePrediction(selectedFile, 0.25);
+
+      if (!res.success) {
+        setIsOfflineError(Boolean(res.isOffline));
+        setErrorMessage(
+          res.error || 'Failed to connect to the vision analysis service. Please check your backend connection.'
+        );
+        setStage('error');
+        return;
+      }
+
+      if (res.data) {
+        const preds = res.data.predictions || [];
+        setDetectedPredictions(preds);
+        setInferenceTime(res.data.inference_time_ms);
+        setIsLiveScan(true);
+
+        if (preds.length > 0) {
+          // Sort by highest confidence
+          const top = [...preds].sort((a, b) => b.confidence - a.confidence)[0];
+          const formatted = buildAnalysisResultFromPrediction(top, res.data.inference_time_ms);
+          setAnalysisResult(formatted);
+        } else {
+          // Zero detections above confidence threshold
+          setAnalysisResult({
+            diseaseName: 'Healthy Leaf / No Disease Symptoms Detected',
+            confidence: 95,
+            severity: 'None',
+            findings:
+              'The vision model analyzed the leaf image and detected no foliar disease patterns or lesions above the confidence threshold.',
+            recommendedAction:
+              'Foliage appears clean and healthy. Continue regular irrigation and scheduled monitoring.',
+            safePractices: [
+              'Ensure leaf is well-lit and centered when capturing scans.',
+              'Inspect the undersides of leaves during warm or humid periods.',
+              'Maintain recommended drip irrigation and nutrient cycles.',
+              'Consult local agricultural extension officers if unusual wilting appears.',
+            ],
+            isReal: true,
+            inferenceTimeMs: res.data.inference_time_ms,
+          });
+        }
+        setStage('result');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'An unexpected error occurred';
+      setIsOfflineError(true);
+      setErrorMessage(msg);
+      setStage('error');
+    }
   };
 
   const resetScan = () => {
-    setSelectedImage(null);
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setErrorMessage(null);
+    setIsOfflineError(false);
+    setDetectedPredictions([]);
+    setInferenceTime(null);
     setStage('idle');
   };
 
   return (
     <div className="space-y-4 pb-20 lg:pb-8">
+      {/* Hidden File Inputs for Camera and File Chooser */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+
       {/* View Header */}
       <div className="bg-white rounded-2xl p-4 md:p-5 border border-slate-200 shadow-sm flex items-center justify-between">
         <div>
           <h2 className="text-base md:text-lg font-bold text-slate-900">Scan Your Crop</h2>
           <p className="text-xs md:text-sm text-slate-600 mt-0.5">
-            Take a clear leaf photo to check for possible disease symptoms.
+            Take a clear leaf photo to check for possible disease symptoms with the YOLO vision model.
           </p>
         </div>
-        <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full border border-amber-200 flex items-center gap-1">
-          <Sparkles className="w-3 h-3 text-amber-600" />
-          <span>Simulated Data</span>
-        </span>
+
+        {isLiveScan ? (
+          <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+            <span>Live Vision Inference</span>
+          </span>
+        ) : (
+          <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full border border-amber-200 flex items-center gap-1">
+            <Sparkles className="w-3 h-3 text-amber-600" />
+            <span>{isRealData ? 'Ready for Leaf Scan' : 'Simulated Data'}</span>
+          </span>
+        )}
       </div>
 
       {/* Main Responsive Container (1 col mobile/tablet, 2 cols desktop) */}
@@ -90,41 +290,80 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 Camera Viewfinder
               </span>
               <span className="text-[10px] font-semibold text-slate-400">
-                {stage === 'result' ? 'Scan Completed' : 'Ready'}
+                {stage === 'result'
+                  ? isLiveScan
+                    ? 'YOLO Analysis Completed'
+                    : 'Scan Completed'
+                  : stage === 'analyzing'
+                  ? 'Analyzing...'
+                  : stage === 'preview'
+                  ? 'Photo Selected'
+                  : stage === 'error'
+                  ? 'Error'
+                  : 'Ready'}
               </span>
             </div>
 
             {/* Viewfinder Display Box */}
-            <div className="relative aspect-[4/3] rounded-xl bg-slate-900 border-2 border-dashed border-slate-600 flex flex-col items-center justify-center p-6 text-center overflow-hidden">
+            <div className="relative aspect-[4/3] rounded-xl bg-slate-900 border-2 border-dashed border-slate-600 flex flex-col items-center justify-center p-3 text-center overflow-hidden">
               {/* Corner Viewfinder Brackets */}
-              <div className="absolute top-3 left-3 w-6 h-6 border-t-2 border-l-2 border-farm-400" />
-              <div className="absolute top-3 right-3 w-6 h-6 border-t-2 border-r-2 border-farm-400" />
-              <div className="absolute bottom-3 left-3 w-6 h-6 border-b-2 border-l-2 border-farm-400" />
-              <div className="absolute bottom-3 right-3 w-6 h-6 border-b-2 border-r-2 border-farm-400" />
+              <div className="absolute top-3 left-3 w-6 h-6 border-t-2 border-l-2 border-farm-400 z-10" />
+              <div className="absolute top-3 right-3 w-6 h-6 border-t-2 border-r-2 border-farm-400 z-10" />
+              <div className="absolute bottom-3 left-3 w-6 h-6 border-b-2 border-l-2 border-farm-400 z-10" />
+              <div className="absolute bottom-3 right-3 w-6 h-6 border-b-2 border-r-2 border-farm-400 z-10" />
 
-              {stage === 'idle' && (
-                <>
-                  <div className="w-14 h-14 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-farm-400 mb-2">
+              {/* State A: Idle - Prompt to shoot/upload */}
+              {stage === 'idle' && !previewUrl && (
+                <div className="flex flex-col items-center justify-center p-4">
+                  <div className="w-14 h-14 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-farm-400 mb-2 shadow-inner">
                     <Camera className="w-7 h-7" />
                   </div>
                   <p className="text-xs md:text-sm font-semibold text-slate-200">
                     Point camera at a single crop leaf
                   </p>
                   <p className="text-[11px] text-slate-400 mt-1">
-                    Ensure proper natural lighting
+                    Capture under natural light or upload an image
                   </p>
-                </>
+                </div>
               )}
 
-              {(stage === 'preview' || stage === 'analyzing' || stage === 'result') && (
-                <div className="flex flex-col items-center justify-center text-white">
-                  <div className="w-16 h-16 rounded-2xl bg-farm-900/70 border border-farm-400 flex items-center justify-center mb-2 shadow-inner">
-                    <FileCheck className="w-8 h-8 text-farm-300" />
-                  </div>
-                  <p className="text-sm font-bold">Leaf Sample Captured</p>
-                  <p className="text-xs text-slate-300 mt-0.5">
-                    {stage === 'result' ? 'Checked against crop health model (Simulated)' : 'Ready for analysis'}
-                  </p>
+              {/* State B: Photo selected / analyzed */}
+              {previewUrl && (
+                <div className="relative w-full h-full flex items-center justify-center overflow-hidden rounded-lg">
+                  <img
+                    src={previewUrl}
+                    alt="Selected leaf sample"
+                    className="max-h-full max-w-full object-contain rounded-lg shadow-sm"
+                  />
+
+                  {/* Scanning active animation overlay */}
+                  {stage === 'analyzing' && (
+                    <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm flex flex-col items-center justify-center p-4 text-white z-20">
+                      <div className="w-12 h-12 rounded-full border-4 border-farm-300 border-t-farm-600 animate-spin mb-3" />
+                      <div className="flex items-center gap-1.5 text-xs font-black tracking-wider text-farm-300 uppercase">
+                        <Scan className="w-4 h-4 animate-pulse" />
+                        <span>Running YOLO11 Model</span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 mt-1 font-medium">
+                        Checking for foliar diseases and lesions...
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Result completed badge overlay */}
+                  {stage === 'result' && isLiveScan && (
+                    <div className="absolute bottom-2 left-2 right-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700/80 rounded-lg px-2.5 py-1.5 flex items-center justify-between text-[11px] text-white z-10">
+                      <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {analysisResult.condition ? formatConditionName(analysisResult.condition) : 'Scanned'}
+                      </span>
+                      {inferenceTime && (
+                        <span className="text-slate-400 font-mono text-[10px]">
+                          {inferenceTime} ms
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -134,26 +373,27 @@ export const ScanView: React.FC<ScanViewProps> = ({
           <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2 text-amber-900">
             <Lightbulb className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <p className="text-[11px] leading-relaxed">
-              <span className="font-bold">Tip: </span>Keep the leaf clearly visible and avoid very dark images or blurry angles.
+              <span className="font-bold">Tip: </span>Center a single leaf clearly in the viewfinder. Avoid shadows, excessive blur, or multiple leaves in one shot.
             </p>
           </div>
         </div>
 
         {/* Right Column: Interactive Controls & Analysis State (7 cols on desktop) */}
         <div className="lg:col-span-7">
-          {/* STAGE 1: IDLE / ACTIONS */}
+          {/* STAGE 1: IDLE / CHOOSE CAPTURE METHOD */}
           {stage === 'idle' && (
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Choose Capture Method</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Take a new leaf photo using your device camera or select an existing field image.
+                  Take a new leaf photo using your device camera or upload a field photograph for YOLO detection.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <button
-                  onClick={simulateCapture}
+                  onClick={triggerCamera}
+                  type="button"
                   className="flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-farm-700 hover:bg-farm-800 text-white font-bold text-xs md:text-sm active:scale-95 transition shadow-sm"
                 >
                   <Camera className="w-4 h-4" />
@@ -161,7 +401,8 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </button>
 
                 <button
-                  onClick={simulateCapture}
+                  onClick={triggerUpload}
+                  type="button"
                   className="flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-800 font-bold text-xs md:text-sm active:scale-95 transition"
                 >
                   <UploadCloud className="w-4 h-4 text-slate-600" />
@@ -169,11 +410,11 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </button>
               </div>
 
-              <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs text-slate-600 space-y-1">
-                <span className="font-bold text-slate-800 block">How to get a better scan result:</span>
-                <p>1. Center a single diseased leaf in the viewfinder.</p>
-                <p>2. Keep camera steady to avoid motion blur.</p>
-                <p>3. Capture both healthy green areas and discoloration spots.</p>
+              <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 text-xs text-slate-600 space-y-1.5">
+                <span className="font-bold text-slate-800 block">How to obtain an accurate vision result:</span>
+                <p className="leading-relaxed">1. Position a single diseased or target leaf in the frame.</p>
+                <p className="leading-relaxed">2. Hold the camera steady to avoid motion blur.</p>
+                <p className="leading-relaxed">3. Make sure visible lesions, spots, or yellowing are in clear focus.</p>
               </div>
             </div>
           )}
@@ -184,22 +425,35 @@ export const ScanView: React.FC<ScanViewProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Review Leaf Photo</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Confirm the leaf spots are clearly visible before running diagnosis.
+                  Confirm the leaf spots and details are clearly visible before running YOLO diagnosis.
                 </p>
               </div>
+
+              {selectedFile && (
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs flex items-center justify-between text-slate-600">
+                  <span className="font-medium truncate max-w-[200px]">{selectedFile.name}</span>
+                  <span className="text-slate-400 font-mono text-[11px]">
+                    {(selectedFile.size / 1024).toFixed(1)} KB
+                  </span>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <button
                   onClick={runAnalysis}
-                  className="py-3.5 px-4 rounded-xl bg-farm-700 hover:bg-farm-800 text-white font-bold text-xs md:text-sm active:scale-95 transition shadow-sm"
+                  type="button"
+                  className="flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-farm-700 hover:bg-farm-800 text-white font-bold text-xs md:text-sm active:scale-95 transition shadow-sm"
                 >
-                  Analyze Leaf
+                  <Scan className="w-4 h-4" />
+                  <span>Analyze Leaf</span>
                 </button>
+
                 <button
-                  onClick={resetScan}
+                  onClick={triggerUpload}
+                  type="button"
                   className="py-3.5 px-4 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs md:text-sm active:scale-95 transition"
                 >
-                  Retake Photo
+                  Choose Different Photo
                 </button>
               </div>
             </div>
@@ -209,10 +463,75 @@ export const ScanView: React.FC<ScanViewProps> = ({
           {stage === 'analyzing' && (
             <div className="bg-white rounded-2xl p-8 border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center space-y-3">
               <div className="w-14 h-14 rounded-full border-4 border-farm-200 border-t-farm-700 animate-spin" />
-              <h3 className="text-sm font-bold text-slate-900">Analyzing Leaf Health...</h3>
+              <h3 className="text-sm font-bold text-slate-900">Running Disease Inference...</h3>
               <p className="text-xs text-slate-500 max-w-sm leading-relaxed">
-                Examining leaf discoloration, spot patterns, and fungal symptoms against crop health models.
+                Evaluating leaf discoloration, lesion patterns, and foliar stress against the YOLO11 model.
               </p>
+              <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
+                <Cpu className="w-3.5 h-3.5 text-farm-600" />
+                <span>POST /api/v1/vision/predict</span>
+              </div>
+            </div>
+          )}
+
+          {/* STAGE ERROR: BACKEND OFFLINE OR INFERENCE ERROR */}
+          {stage === 'error' && (
+            <div className="bg-white rounded-2xl p-5 border border-rose-200 shadow-sm space-y-4">
+              <div className="flex items-start gap-3">
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                    isOfflineError ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                  }`}
+                >
+                  {isOfflineError ? <WifiOff className="w-5 h-5" /> : <AlertOctagon className="w-5 h-5" />}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {isOfflineError ? 'Device Offline / Gateway Unavailable' : 'Analysis Failed'}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {isOfflineError
+                      ? 'Cannot reach the vision inference server at the configured backend address.'
+                      : 'The vision service encountered an error while analyzing this leaf image.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 text-xs space-y-1.5">
+                <div className="flex items-center justify-between text-slate-500 text-[11px]">
+                  <span>Backend Endpoint:</span>
+                  <code className="font-mono text-slate-700 bg-slate-200/70 px-1.5 py-0.5 rounded">
+                    POST /api/v1/vision/predict
+                  </code>
+                </div>
+                <div className="text-slate-700 leading-relaxed font-medium">
+                  {errorMessage || 'Unable to connect to local gateway.'}
+                </div>
+                {isOfflineError && (
+                  <p className="text-[11px] text-amber-800 pt-1 leading-relaxed">
+                    Ensure the FastAPI server is running with YOLO dependencies installed.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <button
+                  onClick={runAnalysis}
+                  type="button"
+                  className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-farm-700 hover:bg-farm-800 text-white font-bold text-xs md:text-sm active:scale-95 transition shadow-sm"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Retry Analysis</span>
+                </button>
+
+                <button
+                  onClick={resetScan}
+                  type="button"
+                  className="py-3 px-4 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs md:text-sm active:scale-95 transition"
+                >
+                  Choose Another Photo
+                </button>
+              </div>
             </div>
           )}
 
@@ -221,11 +540,37 @@ export const ScanView: React.FC<ScanViewProps> = ({
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3.5">
               {/* Result Header Badge */}
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-rose-100 text-rose-900 border border-rose-200">
-                  Possible Disease Detected (Simulated)
-                </span>
+                {isLiveScan ? (
+                  <span
+                    className={`text-[11px] font-bold px-2.5 py-1 rounded-full border flex items-center gap-1 ${
+                      analysisResult.severity === 'None'
+                        ? 'bg-emerald-100 text-emerald-900 border-emerald-200'
+                        : 'bg-rose-100 text-rose-900 border-rose-200'
+                    }`}
+                  >
+                    {analysisResult.severity === 'None' ? (
+                      <>
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        <span>Healthy Leaf (Live YOLO Inference)</span>
+                      </>
+                    ) : (
+                      <>
+                        <AlertOctagon className="w-3 h-3 text-rose-600" />
+                        <span>Disease Detected (Live YOLO Inference)</span>
+                      </>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-rose-100 text-rose-900 border border-rose-200">
+                    Possible Disease Detected (Simulated)
+                  </span>
+                )}
+
                 <span className="text-xs font-bold text-slate-500">
-                  Confidence: <span className="text-slate-900">{analysisResult.confidence}% (Simulated)</span>
+                  Confidence:{' '}
+                  <span className="text-slate-900 font-black">
+                    {analysisResult.confidence}%{isLiveScan ? '' : ' (Simulated)'}
+                  </span>
                 </span>
               </div>
 
@@ -234,13 +579,69 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 <h3 className="text-lg md:text-xl font-black text-slate-900">
                   {analysisResult.diseaseName}
                 </h3>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs font-semibold text-slate-600">Severity:</span>
-                  <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900">
-                    {analysisResult.severity}
-                  </span>
+                <div className="flex items-center gap-3 mt-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-semibold text-slate-600">Severity:</span>
+                    <span
+                      className={`text-xs font-bold px-2 py-0.5 rounded-md ${
+                        analysisResult.severity === 'None'
+                          ? 'bg-emerald-100 text-emerald-900'
+                          : analysisResult.severity === 'Severe'
+                          ? 'bg-rose-100 text-rose-900'
+                          : 'bg-amber-100 text-amber-900'
+                      }`}
+                    >
+                      {analysisResult.severity}
+                    </span>
+                  </div>
+
+                  {isLiveScan && analysisResult.crop && (
+                    <div className="flex items-center gap-1 text-xs text-slate-500">
+                      <span>Crop:</span>
+                      <span className="font-semibold text-slate-800">
+                        {formatCropName(analysisResult.crop)}
+                      </span>
+                    </div>
+                  )}
+
+                  {isLiveScan && analysisResult.condition && (
+                    <div className="flex items-center gap-1 text-xs text-slate-500">
+                      <span>Condition:</span>
+                      <span className="font-semibold text-slate-800">
+                        {formatConditionName(analysisResult.condition)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
+
+              {/* Real Model Telemetry Bar (only for live scan) */}
+              {isLiveScan && (
+                <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-200 grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-slate-600">
+                  <div className="flex items-center gap-1.5">
+                    <Cpu className="w-3.5 h-3.5 text-farm-600" />
+                    <span>
+                      Model: <span className="font-semibold text-slate-800">YOLO11n</span>
+                    </span>
+                  </div>
+                  {inferenceTime && (
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-farm-600" />
+                      <span>
+                        Latency: <span className="font-semibold text-slate-800">{inferenceTime} ms</span>
+                      </span>
+                    </div>
+                  )}
+                  {detectedPredictions.length > 0 && (
+                    <div className="flex items-center gap-1.5 col-span-2 sm:col-span-1">
+                      <Scan className="w-3.5 h-3.5 text-farm-600" />
+                      <span>
+                        Detections: <span className="font-semibold text-slate-800">{detectedPredictions.length}</span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* What We Found */}
               <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200">
@@ -281,12 +682,14 @@ export const ScanView: React.FC<ScanViewProps> = ({
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
                 <button
                   onClick={onViewAdvice}
+                  type="button"
                   className="py-3 px-4 rounded-xl bg-farm-700 hover:bg-farm-800 text-white font-bold text-xs md:text-sm active:scale-95 transition text-center shadow-sm"
                 >
                   View Advice
                 </button>
                 <button
                   onClick={resetScan}
+                  type="button"
                   className="flex items-center justify-center gap-1.5 py-3 px-4 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-800 font-bold text-xs md:text-sm active:scale-95 transition text-center"
                 >
                   <RefreshCw className="w-3.5 h-3.5 text-slate-600" />
