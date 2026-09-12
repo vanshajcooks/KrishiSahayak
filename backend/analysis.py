@@ -22,26 +22,91 @@ elif __name__ == "analysis":
         pass
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 try:
     from backend.schemas import (
         DecisionReport,
+        DiseasePrediction,
         LatestSensorResponse,
         UnifiedAnalysisResponse,
         VisionPredictionResponse,
+        VisionReliabilityTier,
         WeatherData,
     )
 except ImportError:
     from schemas import (
         DecisionReport,
+        DiseasePrediction,
         LatestSensorResponse,
         UnifiedAnalysisResponse,
         VisionPredictionResponse,
+        VisionReliabilityTier,
         WeatherData,
     )
 
+
+# 10-second freshness threshold for ESP32 sensor telemetry
+TELEMETRY_FRESHNESS_THRESHOLD_SECONDS: float = 10.0
+
+# Three-tier YOLO vision reliability thresholds
+VISION_RELIABILITY_THRESHOLD: float = 0.50  # Tier 1 (>= 0.50)
+VISION_DETECTION_FLOOR: float = 0.25        # Tier 2 (0.25 <= conf < 0.50)
+
+
+def evaluate_vision_reliability(
+    predictions: List[DiseasePrediction],
+    reliable_threshold: float = VISION_RELIABILITY_THRESHOLD,
+) -> Tuple[VisionReliabilityTier, bool, Optional[float]]:
+    """
+    Evaluates detection proposals against the three-tier reliability gate:
+    - RELIABLE (Tier 1): At least one candidate has confidence >= reliable_threshold (0.50).
+    - INCONCLUSIVE (Tier 2): Candidate detections exist, but top confidence is < reliable_threshold (0.25 <= conf < 0.50).
+    - NO_DETECTION (Tier 3): Zero detections returned by the vision model.
+    """
+    if not predictions:
+        return VisionReliabilityTier.NO_DETECTION, False, None
+
+    top_conf = max(p.confidence for p in predictions)
+    if top_conf >= reliable_threshold:
+        return VisionReliabilityTier.RELIABLE, True, top_conf
+    else:
+        return VisionReliabilityTier.INCONCLUSIVE, False, top_conf
+
+
+def is_telemetry_fresh(
+    timestamp: Any,
+    threshold_seconds: float = TELEMETRY_FRESHNESS_THRESHOLD_SECONDS,
+    reference_time: Optional[datetime] = None,
+) -> bool:
+    """
+    Evaluates whether a telemetry reading's timestamp falls within the freshness threshold.
+    Returns True if the reading is at most `threshold_seconds` old (default 10s).
+    """
+    if timestamp is None:
+        return False
+
+    if isinstance(timestamp, str):
+        try:
+            ts = datetime.fromisoformat(timestamp)
+        except Exception:
+            return False
+    elif isinstance(timestamp, datetime):
+        ts = timestamp
+    else:
+        return False
+
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+
+    now = reference_time or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    age_seconds = (now - ts).total_seconds()
+    # Accept clock skew of up to 5s in future, up to threshold_seconds in past
+    return -5.0 <= age_seconds <= threshold_seconds
 
 
 def synthesize_farm_insights(
@@ -49,23 +114,53 @@ def synthesize_farm_insights(
     decision: Optional[DecisionReport],
     sensor_telemetry: Optional[LatestSensorResponse],
     weather: Optional[WeatherData] = None,
+    sensor_stale: bool = False,
 ) -> List[str]:
     """
     Synthesizes integrated, cross-modal insights combining leaf vision detections,
     localized environmental and soil sensor data, and regional weather forecasts.
+    Enforces the Three-Tier YOLO Reliability Gate:
+    - Tier 1 (RELIABLE, conf >= 0.50): Full disease/healthy identification and cross-modal correlation.
+    - Tier 2 (INCONCLUSIVE, 0.25 <= conf < 0.50): Bypasses disease quarantine/treatment advisories; prompts photo retake.
+    - Tier 3 (NO_DETECTION, 0 boxes): Reports no symptoms without falsely claiming healthy with hardcoded high confidence.
     """
     insights: List[str] = []
 
     # ------------------------------------------------------------------------
-    # 1. Vision AI Analysis Summary
+    # 1. Vision AI Analysis Summary (Three-Tier Reliability Gate)
     # ------------------------------------------------------------------------
     has_disease = False
     condition_name = "Healthy"
-    if vision.count == 0:
+    crop_name = "Crop"
+
+    # Derive or check reliability tier
+    reliability = getattr(vision, "reliability", None)
+    if reliability is None:
+        reliability, is_rel, top_conf = evaluate_vision_reliability(vision.predictions)
+    elif isinstance(reliability, str):
+        try:
+            reliability = VisionReliabilityTier(reliability)
+        except ValueError:
+            reliability, is_rel, top_conf = evaluate_vision_reliability(vision.predictions)
+
+    if reliability == VisionReliabilityTier.NO_DETECTION or vision.count == 0:
         insights.append(
-            "Vision AI: No foliar disease symptoms detected on the leaf sample above confidence threshold."
+            "Vision AI: No reliable foliar disease symptoms detected on the leaf sample. "
+            "If crop distress is suspected, please capture a clear, well-lit close-up photograph of affected foliage."
         )
+    elif reliability == VisionReliabilityTier.INCONCLUSIVE:
+        top_pred = max(vision.predictions, key=lambda p: p.confidence)
+        conf_pct = int(round(top_pred.confidence * 100))
+        tentative_crop = top_pred.crop.capitalize()
+        tentative_cond = top_pred.condition.replace("_", " ").title()
+        insights.append(
+            f"Vision AI: Inconclusive detection ({conf_pct}% confidence). Candidate visual patterns weakly resemble "
+            f"{tentative_cond} on {tentative_crop}, but do not meet the reliability threshold (50%). "
+            f"Please retake a clear, well-lit photo centered on a single leaf before applying any treatments."
+        )
+        # Note: has_disease remains FALSE so no disease-specific quarantine or fungicide recommendations are generated!
     else:
+        # Tier 1: RELIABLE (confidence >= 0.50)
         top_pred = max(vision.predictions, key=lambda p: p.confidence)
         crop_name = top_pred.crop.capitalize()
         condition_name = top_pred.condition.replace("_", " ").title()
@@ -84,7 +179,11 @@ def synthesize_farm_insights(
     # ------------------------------------------------------------------------
     # 2. Localized Sensor Telemetry & Agronomic Decision Integration
     # ------------------------------------------------------------------------
-    if sensor_telemetry is None or decision is None:
+    if sensor_stale:
+        insights.append(
+            "Field sensor telemetry is stale (>10s since last ping). ESP32 sensor node may be offline; live soil and microclimate context is currently unavailable."
+        )
+    elif sensor_telemetry is None or decision is None:
         insights.append(
             "Sensor telemetry unavailable: Field sensor telemetry was not found or has not been ingested yet."
         )
@@ -93,6 +192,7 @@ def synthesize_farm_insights(
             f"Sensor Context: Soil moisture is {sensor_telemetry.soil_moisture:.1f}% ({decision.soil_moisture_status.value}), "
             f"ambient temp {sensor_telemetry.temperature:.1f}°C, and humidity {sensor_telemetry.humidity:.1f}%."
         )
+
 
         if has_disease:
             if decision.disease_risk_level.value in ("HIGH", "MEDIUM"):
@@ -112,13 +212,23 @@ def synthesize_farm_insights(
                 )
         else:
             if decision.irrigation_action.value == "IRRIGATE_SOON":
-                insights.append(
-                    "Crop foliage appears healthy, but soil moisture is low. Proceed with scheduled irrigation."
-                )
+                if reliability == VisionReliabilityTier.RELIABLE and top_pred.condition == "healthy":
+                    insights.append(
+                        "Crop foliage appears healthy, but soil moisture is low. Proceed with scheduled irrigation."
+                    )
+                else:
+                    insights.append(
+                        "Soil moisture is low. Proceed with scheduled irrigation."
+                    )
             elif decision.irrigation_action.value == "DELAY_IRRIGATION_RAIN_DETECTED":
-                insights.append(
-                    "Foliage appears healthy and sensor rain is detected. Irrigation is paused to conserve water."
-                )
+                if reliability == VisionReliabilityTier.RELIABLE and top_pred.condition == "healthy":
+                    insights.append(
+                        "Foliage appears healthy and sensor rain is detected. Irrigation is paused to conserve water."
+                    )
+                else:
+                    insights.append(
+                        "Sensor rain is detected. Irrigation is paused to conserve water."
+                    )
             elif decision.irrigation_action.value == "OVERWATERING_WARNING":
                 insights.append(
                     "Soil moisture is excessively high. Monitor field drainage to prevent root rot."
@@ -171,13 +281,33 @@ def build_unified_analysis(
     sensor_reading: Optional[Dict[str, Any]],
     decision: Optional[DecisionReport],
     weather: Optional[WeatherData] = None,
+    is_fresh: Optional[bool] = None,
+    reference_time: Optional[datetime] = None,
 ) -> UnifiedAnalysisResponse:
     """
     Constructs a UnifiedAnalysisResponse from vision, sensor, and optional weather subsystems.
-    Gracefully handles presence or absence of sensor reading and weather telemetry.
+    Enforces the 10-second telemetry freshness threshold: stale readings (>10s) are marked as
+    unavailable/stale and excluded from live decision context.
     """
     sensor_telemetry: Optional[LatestSensorResponse] = None
+    sensor_stale = False
+    sensor_available = False
+
     if sensor_reading is not None:
+        if is_fresh is None:
+            # If decision is already provided and is_fresh not specified,
+            # preserve backward compatibility for direct unit test calls
+            if decision is not None:
+                is_fresh = True
+            else:
+                is_fresh = is_telemetry_fresh(
+                    sensor_reading.get("timestamp"),
+                    reference_time=reference_time,
+                )
+
+        sensor_stale = not is_fresh
+        sensor_available = is_fresh
+
         sensor_telemetry = LatestSensorResponse(
             sensor_id=sensor_reading["sensor_id"],
             soil_moisture=sensor_reading["soil_moisture"],
@@ -186,24 +316,45 @@ def build_unified_analysis(
             battery_voltage=sensor_reading.get("battery_voltage"),
             rain_level=sensor_reading.get("rain_level"),
             timestamp=sensor_reading["timestamp"],
+            is_fresh=is_fresh,
         )
+
+    # Ensure vision reliability metadata is populated
+    if (
+        getattr(vision, "reliability", None) is None
+        or getattr(vision, "top_confidence", None) is None
+        or (
+            vision.reliability == VisionReliabilityTier.RELIABLE
+            and (not vision.predictions or max((p.confidence for p in vision.predictions), default=0.0) < VISION_RELIABILITY_THRESHOLD)
+        )
+    ):
+        rel_tier, is_rel, top_conf = evaluate_vision_reliability(vision.predictions)
+        vision.reliability = rel_tier
+        vision.is_reliable = is_rel
+        vision.top_confidence = top_conf
+
+    # If telemetry is stale, do not use stale data as live decision context
+    effective_decision = decision if (sensor_available and is_fresh) else None
 
     insights = synthesize_farm_insights(
         vision=vision,
-        decision=decision,
-        sensor_telemetry=sensor_telemetry,
+        decision=effective_decision,
+        sensor_telemetry=sensor_telemetry if sensor_available else None,
         weather=weather,
+        sensor_stale=sensor_stale,
     )
 
     return UnifiedAnalysisResponse(
         status="success",
         timestamp=datetime.now(timezone.utc),
         vision=vision,
-        sensor_available=sensor_telemetry is not None,
+        sensor_available=sensor_available,
+        sensor_stale=sensor_stale,
         sensor_telemetry=sensor_telemetry,
-        decision=decision,
+        decision=effective_decision,
         weather_available=weather is not None,
         weather=weather,
         insights=insights,
     )
+
 

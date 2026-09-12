@@ -94,6 +94,24 @@ def load_model() -> Any:
     return _cached_model
 
 
+def warmup_model(imgsz: int = 640) -> bool:
+    """
+    Performs one dummy YOLO inference on a blank synthetic image to initialize
+    PyTorch CPU execution kernels and the Ultralytics predictor pipeline.
+    Ensures that subsequent user-facing inference requests execute with warm latency.
+    """
+    model = load_model()
+    dummy_img = Image.new("RGB", (imgsz, imgsz), color=(128, 128, 128))
+    model.predict(
+        source=dummy_img,
+        imgsz=imgsz,
+        save=False,
+        verbose=False,
+    )
+    logger.info("YOLO vision model warmed up successfully.")
+    return True
+
+
 def predict_image(
     image_bytes: bytes,
     conf: float = 0.25,

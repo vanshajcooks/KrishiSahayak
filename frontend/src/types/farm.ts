@@ -76,11 +76,15 @@ export interface CropScanAnalysis {
   // Multimodal Unified fields
   isUnified?: boolean;
   sensorAvailable?: boolean;
+  sensorStale?: boolean;
   sensorTelemetry?: BackendSensorTelemetry | null;
   decision?: BackendDecisionReport | null;
   weatherAvailable?: boolean;
   weather?: BackendWeatherData | null;
   insights?: string[];
+  // Three-tier reliability fields
+  reliabilityTier?: VisionReliabilityTier;
+  isReliable?: boolean;
 }
 
 export interface DiseasePrediction {
@@ -90,12 +94,17 @@ export interface DiseasePrediction {
   bbox: number[];
 }
 
+export type VisionReliabilityTier = 'RELIABLE' | 'INCONCLUSIVE' | 'NO_DETECTION';
+
 export interface VisionPredictionResponse {
   status: string;
   model: string;
   predictions: DiseasePrediction[];
   count: number;
   inference_time_ms: number;
+  reliability?: VisionReliabilityTier;
+  is_reliable?: boolean;
+  top_confidence?: number | null;
 }
 
 export interface BackendSensorTelemetry {
@@ -106,7 +115,9 @@ export interface BackendSensorTelemetry {
   battery_voltage?: number | null;
   rain_level?: number | null;
   timestamp: string;
+  is_fresh?: boolean;
 }
+
 
 export interface BackendDecisionReport {
   sensor_id: string;
@@ -149,8 +160,10 @@ export interface UnifiedFarmAnalysisResponse {
   timestamp: string;
   vision: VisionPredictionResponse;
   sensor_available: boolean;
+  sensor_stale?: boolean;
   sensor_telemetry?: BackendSensorTelemetry | null;
   decision?: BackendDecisionReport | null;
+
   weather_available: boolean;
   weather?: BackendWeatherData | null;
   insights: string[];

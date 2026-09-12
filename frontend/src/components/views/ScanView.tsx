@@ -18,7 +18,9 @@ import {
   CloudRain,
   Thermometer,
   Layers,
+  AlertTriangle,
 } from 'lucide-react';
+
 import {
   CropScanAnalysis,
   DiseasePrediction,
@@ -26,6 +28,7 @@ import {
   BackendSensorTelemetry,
   BackendDecisionReport,
   BackendWeatherData,
+  VisionReliabilityTier,
 } from '@/types/farm';
 import { analyzeUnifiedFarm } from '@/services/api';
 
@@ -52,29 +55,71 @@ function formatConditionName(condition: string): string {
 }
 
 function formatIrrigationStatus(
-  action?: string,
+  action: string | undefined,
   decision?: BackendDecisionReport | null
-): { text: string; colorClass: string } {
-  if (!action) {
-    if (decision?.primary_action) {
-      return { text: decision.primary_action, colorClass: 'text-slate-800 font-semibold' };
+): { text: string; colorClass: string; badgeClass: string } {
+  if (decision?.primary_action) {
+    const act = decision.primary_action.toLowerCase();
+    if (act.includes('pause') || act.includes('rain')) {
+      return {
+        text: 'Paused (Rain Detected)',
+        colorClass: 'text-blue-700 font-bold',
+        badgeClass: 'bg-blue-100 text-blue-900 border-blue-200',
+      };
     }
-    return { text: 'Not Evaluated', colorClass: 'text-slate-500 font-medium' };
+    if (act.includes('irrigate soon') || act.includes('low soil moisture')) {
+      return {
+        text: 'Irrigation Needed (Dry)',
+        colorClass: 'text-rose-700 font-bold',
+        badgeClass: 'bg-rose-100 text-rose-900 border-rose-200',
+      };
+    }
+    if (act.includes('optimal') || act.includes('adequate') || act.includes('no irrigation')) {
+      return {
+        text: 'Adequate (Optimal)',
+        colorClass: 'text-emerald-700 font-bold',
+        badgeClass: 'bg-emerald-100 text-emerald-900 border-emerald-200',
+      };
+    }
+    if (act.includes('overwater')) {
+      return {
+        text: 'Overwatering Warning',
+        colorClass: 'text-amber-700 font-bold',
+        badgeClass: 'bg-amber-100 text-amber-900 border-amber-200',
+      };
+    }
   }
 
   switch (action) {
     case 'IRRIGATE_SOON':
-      return { text: 'Yes — Irrigate Soon', colorClass: 'text-rose-700 font-bold' };
-    case 'NO_IRRIGATION_NEEDED':
-      return { text: 'No — Moisture Optimal', colorClass: 'text-emerald-700 font-bold' };
+      return {
+        text: 'Irrigation Needed (Dry)',
+        colorClass: 'text-rose-700 font-bold',
+        badgeClass: 'bg-rose-100 text-rose-900 border-rose-200',
+      };
     case 'DELAY_IRRIGATION_RAIN_DETECTED':
-      return { text: 'Paused — Rain Detected', colorClass: 'text-blue-700 font-bold' };
+      return {
+        text: 'Paused (Rain Detected)',
+        colorClass: 'text-blue-700 font-bold',
+        badgeClass: 'bg-blue-100 text-blue-900 border-blue-200',
+      };
     case 'OVERWATERING_WARNING':
-      return { text: 'No — High Moisture', colorClass: 'text-amber-700 font-bold' };
+      return {
+        text: 'Overwatering Warning',
+        colorClass: 'text-amber-700 font-bold',
+        badgeClass: 'bg-amber-100 text-amber-900 border-amber-200',
+      };
+    case 'NO_IRRIGATION_NEEDED':
+      return {
+        text: 'Adequate (Optimal)',
+        colorClass: 'text-emerald-700 font-bold',
+        badgeClass: 'bg-emerald-100 text-emerald-900 border-emerald-200',
+      };
     default:
       return {
-        text: decision?.primary_action || action.replace(/_/g, ' '),
+        text: decision?.primary_action || 'Normal',
         colorClass: 'text-slate-800 font-semibold',
+        badgeClass: 'bg-slate-100 text-slate-800 border-slate-200',
       };
   }
 }
@@ -83,15 +128,52 @@ function buildAnalysisResultFromUnified(
   pred: DiseasePrediction,
   inferenceTimeMs?: number,
   sensorAvailable: boolean = false,
+  sensorStale: boolean = false,
   sensorTelemetry?: BackendSensorTelemetry | null,
   decision?: BackendDecisionReport | null,
   weatherAvailable: boolean = false,
   weather?: BackendWeatherData | null,
-  insights: string[] = []
+  insights: string[] = [],
+  reliabilityTier: VisionReliabilityTier = 'RELIABLE',
+  isReliable: boolean = true
 ): CropScanAnalysis {
   const cropTitle = formatCropName(pred.crop);
   const conditionTitle = formatConditionName(pred.condition);
   const confPercent = Math.round(pred.confidence * 100);
+
+  // Tier 2: Inconclusive (confidence < 0.50 or reliabilityTier === 'INCONCLUSIVE')
+  if (reliabilityTier === 'INCONCLUSIVE' || !isReliable || pred.confidence < 0.50) {
+    return {
+      diseaseName: `Candidate Pattern: ${cropTitle} (${conditionTitle}) — Inconclusive`,
+      confidence: confPercent,
+      severity: 'None',
+      findings: `YOLO vision model detected candidate patterns weakly resembling ${conditionTitle} on ${cropTitle} at ${confPercent}% confidence. This does not meet the diagnostic reliability threshold (50%) and may represent background noise, improper lighting, or indistinct leaf features.`,
+      recommendedAction: decision?.primary_action
+        ? `${decision.primary_action} For foliar health: retake a clear, well-lit photograph centered on the leaf blade before taking any chemical or pruning action.`
+        : 'Do not apply chemical sprays or quarantine crops based on this scan. Retake a sharp, well-lit photograph centered on the leaf blade.',
+      safePractices: [
+        'Ensure the camera is focused directly on a single leaf blade in natural lighting.',
+        'Avoid including humans, fingers, complex backgrounds, or excessive shadows in the frame.',
+        'Clean the camera lens and hold steady when capturing the photograph.',
+        'If you suspect genuine crop distress in your field, consult your local agricultural extension officer.',
+      ],
+      crop: pred.crop,
+      condition: pred.condition,
+      bbox: pred.bbox,
+      isReal: true,
+      isUnified: true,
+      inferenceTimeMs,
+      sensorAvailable,
+      sensorStale,
+      sensorTelemetry,
+      decision,
+      weatherAvailable,
+      weather,
+      insights,
+      reliabilityTier: 'INCONCLUSIVE',
+      isReliable: false,
+    };
+  }
 
   if (pred.condition === 'healthy') {
     return {
@@ -114,11 +196,15 @@ function buildAnalysisResultFromUnified(
       isUnified: true,
       inferenceTimeMs,
       sensorAvailable,
+      sensorStale,
       sensorTelemetry,
       decision,
+
       weatherAvailable,
       weather,
       insights,
+      reliabilityTier: 'RELIABLE',
+      isReliable: true,
     };
   }
 
@@ -166,11 +252,15 @@ function buildAnalysisResultFromUnified(
     isUnified: true,
     inferenceTimeMs,
     sensorAvailable,
+    sensorStale,
     sensorTelemetry,
     decision,
+
     weatherAvailable,
     weather,
     insights,
+    reliabilityTier: 'RELIABLE',
+    isReliable: true,
   };
 }
 
@@ -268,32 +358,45 @@ export const ScanView: React.FC<ScanViewProps> = ({
         const weatherTel = unified.weather;
         const insightsList = unified.insights || [];
 
+        const relTier: VisionReliabilityTier =
+          unified.vision?.reliability ||
+          (preds.length === 0
+            ? 'NO_DETECTION'
+            : preds.some((p) => p.confidence >= 0.50)
+            ? 'RELIABLE'
+            : 'INCONCLUSIVE');
+        const isRel =
+          unified.vision?.is_reliable ?? (relTier === 'RELIABLE');
+
         if (preds.length > 0) {
           const top = [...preds].sort((a, b) => b.confidence - a.confidence)[0];
           const formatted = buildAnalysisResultFromUnified(
             top,
             unified.vision.inference_time_ms,
             unified.sensor_available,
+            unified.sensor_stale || false,
             sensorTel,
             dec,
             unified.weather_available,
             weatherTel,
-            insightsList
+            insightsList,
+            relTier,
+            isRel
           );
           setAnalysisResult(formatted);
         } else {
-          // Zero detections
+          // Tier 3: Zero detections — do NOT claim healthy or hardcode 95%
           setAnalysisResult({
-            diseaseName: 'Healthy Leaf / No Disease Symptoms Detected',
-            confidence: 95,
+            diseaseName: 'No Reliable Foliar Symptoms Detected',
+            confidence: 0,
             severity: 'None',
             findings:
-              'The vision model analyzed the leaf image and detected no foliar disease patterns or lesions above the confidence threshold.',
+              'The vision model analyzed the leaf image and detected no recognizable foliar disease patterns or lesions above threshold. If crop distress is suspected, please capture a clear, well-lit close-up photograph of the affected leaf.',
             recommendedAction:
               dec?.primary_action ||
-              'Foliage appears clean and healthy. Continue regular irrigation and scheduled monitoring.',
+              'No obvious foliar disease symptoms identified. Continue regular field monitoring and scheduled irrigation.',
             safePractices: [
-              'Ensure leaf is well-lit and centered when capturing scans.',
+              'Ensure the leaf is well-lit and centered when capturing scans.',
               'Inspect the undersides of leaves during warm or humid periods.',
               'Maintain recommended drip irrigation and nutrient cycles.',
               'Consult local agricultural extension officers if unusual wilting appears.',
@@ -302,13 +405,17 @@ export const ScanView: React.FC<ScanViewProps> = ({
             isUnified: true,
             inferenceTimeMs: unified.vision.inference_time_ms,
             sensorAvailable: unified.sensor_available,
+            sensorStale: unified.sensor_stale || false,
             sensorTelemetry: sensorTel,
             decision: dec,
             weatherAvailable: unified.weather_available,
             weather: weatherTel,
             insights: insightsList,
+            reliabilityTier: 'NO_DETECTION',
+            isReliable: false,
           });
         }
+
         setStage('result');
       }
     } catch (err: unknown) {
@@ -630,7 +737,17 @@ export const ScanView: React.FC<ScanViewProps> = ({
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
               {/* Result Header Badge */}
               <div className="flex items-center justify-between">
-                {isLiveScan ? (
+                {analysisResult.reliabilityTier === 'INCONCLUSIVE' ? (
+                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full border border-amber-300 bg-amber-100 text-amber-900 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Low Confidence / Inconclusive</span>
+                  </span>
+                ) : analysisResult.reliabilityTier === 'NO_DETECTION' ? (
+                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full border border-slate-200 bg-slate-100 text-slate-800 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-slate-600" />
+                    <span>No Symptoms Detected</span>
+                  </span>
+                ) : isLiveScan ? (
                   <span
                     className={`text-[11px] font-bold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${
                       analysisResult.severity === 'None'
@@ -657,12 +774,26 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   </span>
                 )}
 
-                <span className="text-xs font-bold text-slate-500">
-                  Confidence:{' '}
-                  <span className="text-slate-900 font-black">
-                    {analysisResult.confidence}%{isLiveScan ? ' (Live YOLO)' : ' (Simulated)'}
+                {analysisResult.reliabilityTier === 'NO_DETECTION' ? (
+                  <span className="text-xs font-bold text-slate-500">
+                    Detection:{' '}
+                    <span className="text-slate-700 font-semibold">None (&lt;25%)</span>
                   </span>
-                </span>
+                ) : analysisResult.reliabilityTier === 'INCONCLUSIVE' ? (
+                  <span className="text-xs font-bold text-amber-800">
+                    Confidence:{' '}
+                    <span className="text-amber-900 font-black">
+                      {analysisResult.confidence}% (Unreliable)
+                    </span>
+                  </span>
+                ) : (
+                  <span className="text-xs font-bold text-slate-500">
+                    Confidence:{' '}
+                    <span className="text-slate-900 font-black">
+                      {analysisResult.confidence}%{isLiveScan ? ' (Live YOLO)' : ' (Simulated)'}
+                    </span>
+                  </span>
+                )}
               </div>
 
               {/* Disease Title & Severity */}
@@ -673,20 +804,26 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 <div className="flex items-center gap-3 mt-1.5">
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs font-semibold text-slate-600">Severity:</span>
-                    <span
-                      className={`text-xs font-bold px-2 py-0.5 rounded-md ${
-                        analysisResult.severity === 'None'
-                          ? 'bg-emerald-100 text-emerald-900'
-                          : analysisResult.severity === 'Severe'
-                          ? 'bg-rose-100 text-rose-900'
-                          : 'bg-amber-100 text-amber-900'
-                      }`}
-                    >
-                      {analysisResult.severity}
-                    </span>
+                    {analysisResult.reliabilityTier === 'INCONCLUSIVE' ? (
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
+                        Inconclusive
+                      </span>
+                    ) : (
+                      <span
+                        className={`text-xs font-bold px-2 py-0.5 rounded-md ${
+                          analysisResult.severity === 'None'
+                            ? 'bg-emerald-100 text-emerald-900'
+                            : analysisResult.severity === 'Severe'
+                            ? 'bg-rose-100 text-rose-900'
+                            : 'bg-amber-100 text-amber-900'
+                        }`}
+                      >
+                        {analysisResult.severity}
+                      </span>
+                    )}
                   </div>
 
-                  {isLiveScan && analysisResult.crop && (
+                  {isLiveScan && analysisResult.crop && analysisResult.reliabilityTier !== 'NO_DETECTION' && (
                     <div className="flex items-center gap-1 text-xs text-slate-500">
                       <span>Crop:</span>
                       <span className="font-semibold text-slate-800">
@@ -695,7 +832,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                     </div>
                   )}
 
-                  {isLiveScan && analysisResult.condition && (
+                  {isLiveScan && analysisResult.condition && analysisResult.reliabilityTier !== 'NO_DETECTION' && (
                     <div className="flex items-center gap-1 text-xs text-slate-500">
                       <span>Condition:</span>
                       <span className="font-semibold text-slate-800">
@@ -705,6 +842,30 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   )}
                 </div>
               </div>
+
+              {/* Tier 2 & Tier 3 Callout Guidance Banners */}
+              {analysisResult.reliabilityTier === 'INCONCLUSIVE' && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50/90 p-3.5 text-xs space-y-1.5 text-amber-950">
+                  <div className="flex items-center gap-2 font-bold text-amber-900">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+                    <span>Low Confidence / Inconclusive Detection</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-amber-800">
+                    The detected pattern scored {analysisResult.confidence}% confidence, which is below the 50% diagnostic reliability threshold. This detection may be non-leaf background noise, shadows, or ambiguous foliage symptoms. <strong>Do not apply chemical sprays or quarantine crops based on this scan.</strong>
+                  </p>
+                  <p className="text-[11px] font-semibold text-amber-900 pt-0.5">
+                    Guidance: Please retake a clear, well-lit photograph centered directly on a single leaf blade.
+                  </p>
+                </div>
+              )}
+
+              {analysisResult.reliabilityTier === 'NO_DETECTION' && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+                  <p className="text-[11px] leading-relaxed">
+                    No recognizable foliar symptoms or disease lesions were identified above threshold. If crop distress or discoloration is visible in your field, please capture a sharp close-up photograph of the affected leaf blade.
+                  </p>
+                </div>
+              )}
 
               {/* MULTIMODAL TELEMETRY GRID: Field Sensors & Live Weather */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -719,10 +880,16 @@ export const ScanView: React.FC<ScanViewProps> = ({
                       className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                         analysisResult.sensorAvailable
                           ? 'bg-emerald-100 text-emerald-800'
+                          : analysisResult.sensorStale
+                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
                           : 'bg-slate-200 text-slate-600'
                       }`}
                     >
-                      {analysisResult.sensorAvailable ? 'Online' : 'No Sensor Data'}
+                      {analysisResult.sensorAvailable
+                        ? 'Online'
+                        : analysisResult.sensorStale
+                        ? 'Offline (Stale)'
+                        : 'No Sensor Data'}
                     </span>
                   </div>
 
@@ -783,11 +950,25 @@ export const ScanView: React.FC<ScanViewProps> = ({
                         </div>
                       )}
                     </div>
+                  ) : analysisResult.sensorStale ? (
+                    <div className="space-y-1.5 text-slate-600 py-0.5">
+                      <div className="flex items-center gap-1.5 text-amber-800 text-[11px] font-medium bg-amber-50 p-1.5 rounded border border-amber-200">
+                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 text-amber-600" />
+                        <span>Sensor node offline (&gt;10s stale). Disconnected.</span>
+                      </div>
+                      {analysisResult.sensorTelemetry && (
+                        <p className="text-[10px] text-slate-500">
+                          Last reading: {analysisResult.sensorTelemetry.soil_moisture.toFixed(1)}% moisture •{' '}
+                          {analysisResult.sensorTelemetry.temperature.toFixed(1)}°C
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <p className="text-[11px] text-slate-500 italic">
                       No sensor telemetry ingested for this field. Diagnosis based on leaf pathology.
                     </p>
                   )}
+
                 </div>
 
                 {/* Panel 2: Live Weather Telemetry */}

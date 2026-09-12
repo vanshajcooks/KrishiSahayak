@@ -16,7 +16,9 @@ export interface RawBackendSensorReading {
   humidity: number;
   battery_voltage?: number | null;
   timestamp: string;
+  is_fresh?: boolean;
 }
+
 
 export interface BackendHealth {
   status: string;
@@ -131,13 +133,16 @@ export function convertRealSensorToFarmState(raw: RawBackendSensorReading): Farm
   // Format readable timestamp
   const dateObj = new Date(raw.timestamp);
   const timeFormatted = isNaN(dateObj.getTime())
-    ? 'Just now (Live)'
+    ? 'Just now'
     : dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const freshnessSuffix = raw.is_fresh === false ? '(Offline/Stale)' : '(Live)';
 
   return {
     isRealData: true,
-    lastUpdated: `${timeFormatted} (Live)`,
+    lastUpdated: `${timeFormatted} ${freshnessSuffix}`,
+
     profile: {
+
       farmName: 'My Farm',
       crop: 'Tomato',
       field: raw.sensor_id || 'Field 01',

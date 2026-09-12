@@ -78,9 +78,18 @@ export default function App() {
     const sensorRes = await fetchLatestSensorReading();
 
     if (sensorRes.success && sensorRes.data) {
-      setConnectivity('CONNECTED_LIVE');
+      if (sensorRes.data.is_fresh === false) {
+        setConnectivity('DEVICE_OFFLINE');
+        setConnectionError(
+          'ESP32 sensor node is offline (>10s since last ping). Telemetry is stale.'
+        );
+      } else {
+        setConnectivity('CONNECTED_LIVE');
+        setConnectionError(null);
+      }
       setRealFarmState(convertRealSensorToFarmState(sensorRes.data));
     } else if (sensorRes.notFound) {
+
       setConnectivity('CONNECTED_LIVE');
       setConnectionError(
         'Connected to field gateway, but no sensor telemetry has been ingested yet.'

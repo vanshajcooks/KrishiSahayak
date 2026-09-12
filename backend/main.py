@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 
 try:
-    from backend.analysis import build_unified_analysis
+    from backend.analysis import build_unified_analysis, evaluate_vision_reliability, is_telemetry_fresh
     from backend.database import get_db_path, get_latest_reading, init_db, insert_reading
     from backend.decision import evaluate_reading
     from backend.schemas import (
@@ -38,11 +38,12 @@ try:
         VisionPredictionResponse,
         WeatherData,
     )
-    from backend.vision import load_model, predict_image
+    from backend.vision import load_model, predict_image, warmup_model
     from backend.weather import fetch_weather_async
 except ImportError:
-    from analysis import build_unified_analysis
+    from analysis import build_unified_analysis, evaluate_vision_reliability, is_telemetry_fresh
     from database import get_db_path, get_latest_reading, init_db, insert_reading
+
     from decision import evaluate_reading
     from schemas import (
         DecisionReport,
@@ -54,7 +55,7 @@ except ImportError:
         VisionPredictionResponse,
         WeatherData,
     )
-    from vision import load_model, predict_image
+    from vision import load_model, predict_image, warmup_model
     from weather import fetch_weather_async
 
 
@@ -70,9 +71,14 @@ async def lifespan(app: FastAPI):
     init_db()
     try:
         load_model()
+        try:
+            warmup_model()
+        except Exception as warm_exc:
+            logger.warning("YOLO vision model warm-up failed during startup: %s", warm_exc)
     except Exception as exc:
         logger.warning("YOLO vision model could not be pre-loaded at startup: %s", exc)
     yield
+
 
 
 app = FastAPI(
@@ -175,6 +181,8 @@ def get_latest_sensor_data(
                 detail="No sensor readings available yet",
             )
 
+    is_fresh = is_telemetry_fresh(reading["timestamp"])
+
     return LatestSensorResponse(
         sensor_id=reading["sensor_id"],
         soil_moisture=reading["soil_moisture"],
@@ -183,7 +191,9 @@ def get_latest_sensor_data(
         battery_voltage=reading["battery_voltage"],
         rain_level=reading.get("rain_level"),
         timestamp=reading["timestamp"],
+        is_fresh=is_fresh,
     )
+
 
 
 @app.get(
@@ -287,12 +297,17 @@ async def predict_crop_disease(
             detail="An error occurred while processing image inference",
         )
 
+    rel_tier, is_rel, top_conf = evaluate_vision_reliability(predictions)
+
     return VisionPredictionResponse(
         status="success",
         model="yolo11n-crop-disease",
         predictions=predictions,
         count=len(predictions),
         inference_time_ms=inference_time_ms,
+        reliability=rel_tier,
+        is_reliable=is_rel,
+        top_confidence=top_conf,
     )
 
 
@@ -367,25 +382,34 @@ async def analyze_farm(
             detail="An error occurred while processing image inference",
         )
 
+    rel_tier, is_rel, top_conf = evaluate_vision_reliability(predictions)
+
     vision_response = VisionPredictionResponse(
         status="success",
         model="yolo11n-crop-disease",
         predictions=predictions,
         count=len(predictions),
         inference_time_ms=inference_time_ms,
+        reliability=rel_tier,
+        is_reliable=is_rel,
+        top_confidence=top_conf,
     )
 
     # 4. Retrieve latest sensor telemetry from SQLite
     sensor_reading = None
+    is_fresh = False
     try:
         sensor_reading = get_latest_reading(sensor_id=effective_sensor_id, db_path=db_path)
     except Exception as exc:
         logger.warning("Failed to query sensor reading from SQLite during unified analysis: %s", exc)
         # Continue gracefully with sensor_reading = None
 
-    # 5. Evaluate sensor decision if telemetry is available
-    decision_report = None
     if sensor_reading is not None:
+        is_fresh = is_telemetry_fresh(sensor_reading.get("timestamp"))
+
+    # 5. Evaluate sensor decision ONLY if telemetry is fresh (<= 10s)
+    decision_report = None
+    if sensor_reading is not None and is_fresh:
         try:
             decision_report = evaluate_reading(sensor_reading)
         except Exception as exc:
@@ -404,7 +428,9 @@ async def analyze_farm(
         sensor_reading=sensor_reading,
         decision=decision_report,
         weather=weather_telemetry,
+        is_fresh=is_fresh if sensor_reading is not None else None,
     )
+
 
 
 @app.get(

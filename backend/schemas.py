@@ -101,6 +101,8 @@ class LatestSensorResponse(BaseModel):
     battery_voltage: Optional[float] = None
     rain_level: Optional[float] = None
     timestamp: datetime
+    is_fresh: bool = Field(default=True, description="Indicates whether telemetry reading was ingested within the freshness threshold (10s)")
+
 
 
 class MoistureStatus(str, Enum):
@@ -155,6 +157,13 @@ class DiseasePrediction(BaseModel):
     bbox: List[float] = Field(..., min_length=4, max_length=4, description="Bounding box [x1, y1, x2, y2]")
 
 
+class VisionReliabilityTier(str, Enum):
+    """Reliability classification tier for YOLO crop-disease detection."""
+    RELIABLE = "RELIABLE"          # confidence >= 0.50
+    INCONCLUSIVE = "INCONCLUSIVE"  # 0.25 <= confidence < 0.50
+    NO_DETECTION = "NO_DETECTION"  # zero candidate detections
+
+
 class VisionPredictionResponse(BaseModel):
     """Response returned by the crop disease vision inference endpoint."""
     status: str = Field(default="success", description="Status code string")
@@ -162,6 +171,18 @@ class VisionPredictionResponse(BaseModel):
     predictions: List[DiseasePrediction] = Field(default_factory=list, description="List of detected disease instances")
     count: int = Field(..., description="Number of detected instances")
     inference_time_ms: float = Field(..., description="Inference execution time in milliseconds")
+    reliability: VisionReliabilityTier = Field(
+        default=VisionReliabilityTier.RELIABLE,
+        description="Reliability tier: RELIABLE (>=0.50), INCONCLUSIVE (0.25-<0.50), or NO_DETECTION (0)",
+    )
+    is_reliable: bool = Field(
+        default=True,
+        description="Whether the detection meets the reliable diagnostic threshold (confidence >= 0.50)",
+    )
+    top_confidence: Optional[float] = Field(
+        default=None,
+        description="Confidence score of the highest-confidence detection proposal",
+    )
 
 
 class WeatherForecastItem(BaseModel):
@@ -203,9 +224,14 @@ class UnifiedAnalysisResponse(BaseModel):
     )
     sensor_available: bool = Field(
         ...,
-        description="Indicates whether valid sensor telemetry was available for evaluation"
+        description="Indicates whether valid fresh sensor telemetry was available for live evaluation"
+    )
+    sensor_stale: bool = Field(
+        default=False,
+        description="Indicates whether sensor telemetry was found in database but is stale (>10s old)"
     )
     sensor_telemetry: Optional[LatestSensorResponse] = Field(
+
         default=None,
         description="Most recent sensor telemetry reading if available"
     )
