@@ -7,51 +7,39 @@ import { FarmProfile } from '@/types/farm';
 interface FarmCardProps {
   profile: FarmProfile;
   lastUpdated: string;
-  isRealData: boolean;
+  isRealData?: boolean;
 }
 
 export const FarmCard: React.FC<FarmCardProps> = ({
   profile,
   lastUpdated,
-  isRealData,
 }) => {
   return (
-    <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-farm-100 border border-farm-200 flex items-center justify-center text-farm-800">
-            <Sprout className="w-6 h-6 text-farm-700" />
+    <div className="bg-white rounded-2xl p-4 md:p-5 border border-slate-200 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-xl bg-farm-100 border border-farm-200 flex items-center justify-center text-farm-800 shrink-0">
+            <Sprout className="w-7 h-7 text-farm-700" />
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
                 {profile.farmName}
               </span>
             </div>
-            <h2 className="text-base font-bold text-slate-900 leading-tight">
+            <h2 className="text-base md:text-lg font-black text-slate-900 leading-tight">
               Crop: <span className="text-farm-700">{profile.crop}</span>
             </h2>
-            <div className="flex items-center gap-1 text-xs text-slate-500 mt-0.5">
-              <MapPin className="w-3.5 h-3.5 text-slate-400" />
+            <div className="flex items-center gap-1.5 text-xs font-medium text-slate-600 mt-0.5">
+              <MapPin className="w-3.5 h-3.5 text-slate-500" />
               <span>{profile.field}</span>
             </div>
           </div>
         </div>
 
-        <div className="flex flex-col items-end">
-          <span
-            className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-              isRealData
-                ? 'bg-emerald-100 text-emerald-800'
-                : 'bg-amber-100 text-amber-800'
-            }`}
-          >
-            {isRealData ? 'Live Sensor Data' : 'Simulated Data'}
-          </span>
-          <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-1">
-            <Clock className="w-3 h-3" />
-            <span>{lastUpdated}</span>
-          </div>
+        <div className="flex items-center gap-1 text-xs font-semibold text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200">
+          <Clock className="w-3.5 h-3.5 text-slate-500" />
+          <span>{lastUpdated}</span>
         </div>
       </div>
     </div>

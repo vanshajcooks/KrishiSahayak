@@ -164,28 +164,28 @@ export default function App() {
 
               <div>
                 <h3 className="text-base md:text-lg font-bold text-slate-900">
-                  DEVICE OFFLINE
+                  Field Gateway Offline
                 </h3>
                 <p className="text-xs md:text-sm text-slate-600 mt-1 leading-relaxed max-w-md mx-auto">
-                  Local Data Unavailable
+                  Unable to connect to your live field sensor gateway.
                 </p>
                 {connectionError && (
-                  <p className="text-[11px] text-rose-600 mt-1">
+                  <p className="text-xs text-rose-600 mt-1.5 font-medium">
                     {connectionError}
                   </p>
                 )}
               </div>
 
-              <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 text-left text-xs space-y-1.5">
-                <div className="flex items-center gap-1.5 font-bold text-slate-700">
-                  <AlertCircle className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Real Mode Requirements:</span>
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 text-left text-xs space-y-2">
+                <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                  <AlertCircle className="w-4 h-4 text-slate-600" />
+                  <span>Troubleshooting Steps:</span>
                 </div>
-                <p className="text-[11px] md:text-xs text-slate-500">
-                  • Target URL: <code className="text-slate-800">{API_BASE_URL}</code>
+                <p className="text-xs text-slate-600">
+                  • Verify your sensor gateway is powered on and connected to the same Wi-Fi network.
                 </p>
-                <p className="text-[11px] md:text-xs text-slate-500">
-                  • Make sure FastAPI server is running with <code className="text-slate-800">uvicorn main:app</code>
+                <p className="text-xs text-slate-600">
+                  • Check that the farm gateway server is running at <code className="text-slate-800 font-mono">{API_BASE_URL}</code>.
                 </p>
               </div>
 
@@ -203,9 +203,9 @@ export default function App() {
 
                 <button
                   onClick={() => setMode('demo')}
-                  className="px-4 py-3 text-xs md:text-sm font-semibold text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition"
+                  className="px-4 py-3 text-xs md:text-sm font-semibold text-amber-900 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-300 transition"
                 >
-                  Switch back to Demo Mode
+                  Switch back to Simulation Mode
                 </button>
               </div>
             </div>
@@ -269,8 +269,8 @@ export default function App() {
       <button
         onClick={() => setIsVoiceOpen(true)}
         className="lg:hidden fixed bottom-16 right-4 z-40 w-12 h-12 rounded-full bg-farm-700 hover:bg-farm-800 text-white shadow-lg shadow-farm-900/30 flex items-center justify-center active:scale-95 transition"
-        aria-label="Ask Farm Assistant"
-        title="Ask Farm Assistant"
+        aria-label="Ask KhetSaathi"
+        title="Ask KhetSaathi"
       >
         <Mic className="w-5 h-5" />
       </button>

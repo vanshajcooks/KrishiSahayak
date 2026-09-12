@@ -17,9 +17,8 @@ export const CropHealthCard: React.FC<CropHealthCardProps> = ({
   diseaseRisk,
   summary,
   onViewDetails,
-  isRealData = false,
 }) => {
-  let badgeStyle = 'bg-emerald-100 text-emerald-800 border-emerald-200';
+  let badgeStyle = 'bg-emerald-100 text-emerald-900 border-emerald-300';
   let Icon = ShieldCheck;
 
   if (status === 'NEEDS_ATTENTION') {
@@ -31,45 +30,42 @@ export const CropHealthCard: React.FC<CropHealthCardProps> = ({
   }
 
   return (
-    <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-farm-100 text-farm-700 flex items-center justify-center">
-            <Icon className="w-4 h-4" />
-          </div>
-          <div>
+    <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col justify-between h-full">
+      <div>
+        <div className="flex items-center justify-between mb-2.5">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-farm-100 text-farm-700 flex items-center justify-center shrink-0">
+              <Icon className="w-4 h-4" />
+            </div>
             <h3 className="text-sm font-bold text-slate-900 leading-tight">Crop Health</h3>
-            <span className="text-[10px] font-bold text-slate-400 block mt-0.5">
-              {isRealData ? 'Live Sensor Data' : 'Simulated Data'}
-            </span>
           </div>
+
+          <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${badgeStyle}`}>
+            {status === 'NEEDS_ATTENTION' ? 'Needs Attention' : status === 'CRITICAL' ? 'Critical' : 'Healthy'}
+          </span>
         </div>
 
-        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${badgeStyle}`}>
-          {status === 'NEEDS_ATTENTION' ? 'Needs Attention' : status}
-        </span>
-      </div>
+        {/* Disease Risk Pill */}
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-xs font-semibold text-slate-600">Disease Risk:</span>
+          <span
+            className={`text-xs font-black px-2.5 py-0.5 rounded-full ${
+              diseaseRisk === 'HIGH'
+                ? 'bg-rose-100 text-rose-900'
+                : diseaseRisk === 'MEDIUM'
+                ? 'bg-amber-100 text-amber-900'
+                : 'bg-emerald-100 text-emerald-900'
+            }`}
+          >
+            {diseaseRisk}
+          </span>
+        </div>
 
-      {/* Disease Risk Pill */}
-      <div className="flex items-center gap-2 mt-1">
-        <span className="text-xs font-semibold text-slate-600">Disease Risk:</span>
-        <span
-          className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-            diseaseRisk === 'HIGH'
-              ? 'bg-rose-100 text-rose-800'
-              : diseaseRisk === 'MEDIUM'
-              ? 'bg-amber-100 text-amber-800'
-              : 'bg-emerald-100 text-emerald-800'
-          }`}
-        >
-          {diseaseRisk}
-        </span>
+        {/* Summary Message */}
+        <p className="text-xs text-slate-700 mt-2.5 leading-relaxed font-medium">
+          "{summary}"
+        </p>
       </div>
-
-      {/* Summary Message */}
-      <p className="text-xs text-slate-600 mt-2 leading-relaxed font-medium">
-        "{summary}"
-      </p>
 
       {/* View Details Button */}
       <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-end">

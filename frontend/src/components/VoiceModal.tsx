@@ -61,8 +61,8 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
               <Mic className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-bold">Ask Farm Assistant</h2>
-              <p className="text-[11px] text-farm-100">Voice dialogue preview</p>
+              <h2 className="text-sm font-bold">Ask KhetSaathi</h2>
+              <p className="text-xs text-farm-100">Smart Farming Assistant</p>
             </div>
           </div>
           <button

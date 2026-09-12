@@ -33,27 +33,29 @@ export const Header: React.FC<HeaderProps> = ({
             <Sprout className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-slate-900 leading-tight">
-              {t.appTitle}
-            </h1>
+            <div className="flex items-baseline gap-2">
+              <h1 className="text-lg font-black text-slate-900 leading-tight tracking-tight">
+                {language === 'en' ? 'KhetSaathi' : 'खेतसाथी'}
+              </h1>
+              <span className="hidden sm:inline text-xs font-semibold text-farm-700">
+                {language === 'en' ? 'Smart Farming Assistant' : 'स्मार्ट खेती सहायक'}
+              </span>
+            </div>
             <div className="flex items-center gap-1.5 mt-0.5">
               {mode === 'demo' ? (
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
-                  <Sparkles className="w-3 h-3" />
-                  <span>DEMO MODE</span>
-                  <span className="text-amber-600 font-normal">• Simulated Data</span>
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-200">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Simulation Mode</span>
                 </span>
               ) : connectivity === 'CONNECTED_LIVE' ? (
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
-                  <Wifi className="w-3 h-3" />
-                  <span>LIVE FIELD</span>
-                  <span className="text-emerald-600 font-normal">• Live Sensor Data</span>
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-900 bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                  <Wifi className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Live Field Sensors</span>
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full">
-                  <WifiOff className="w-3 h-3" />
-                  <span>DEVICE OFFLINE</span>
-                  <span className="text-rose-600 font-normal">• Local Data Unavailable</span>
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-900 bg-rose-100 px-2.5 py-0.5 rounded-full border border-rose-200">
+                  <WifiOff className="w-3.5 h-3.5 text-rose-700" />
+                  <span>Sensor Gateway Offline</span>
                 </span>
               )}
             </div>

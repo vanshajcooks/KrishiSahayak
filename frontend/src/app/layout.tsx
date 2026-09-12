@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Farm Assistant — Smart Farming Assistant',
-  description: 'Field-ready precision farming assistant for Indian farmers (SIH Problem Statement 26180)',
+  title: 'KhetSaathi — Smart Farming Assistant',
+  description: 'Field-ready precision smart farming assistant for Indian farmers (SIH Problem Statement 26180)',
 };
 
 export const viewport: Viewport = {

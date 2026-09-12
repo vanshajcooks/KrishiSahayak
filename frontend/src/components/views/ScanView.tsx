@@ -144,10 +144,10 @@ function buildAnalysisResultFromUnified(
   // Tier 2: Inconclusive (confidence < 0.50 or reliabilityTier === 'INCONCLUSIVE')
   if (reliabilityTier === 'INCONCLUSIVE' || !isReliable || pred.confidence < 0.50) {
     return {
-      diseaseName: `Candidate Pattern: ${cropTitle} (${conditionTitle}) — Inconclusive`,
+      diseaseName: `Possible ${cropTitle} Pattern (${conditionTitle}) — Unclear`,
       confidence: confPercent,
       severity: 'None',
-      findings: `YOLO vision model detected candidate patterns weakly resembling ${conditionTitle} on ${cropTitle} at ${confPercent}% confidence. This does not meet the diagnostic reliability threshold (50%) and may represent background noise, improper lighting, or indistinct leaf features.`,
+      findings: `The scan detected faint patterns weakly resembling ${conditionTitle} on ${cropTitle} at ${confPercent}% confidence. This is below the clear diagnostic threshold (50%) and may be caused by indistinct leaf features, shadows, or camera blur.`,
       recommendedAction: decision?.primary_action
         ? `${decision.primary_action} For foliar health: retake a clear, well-lit photograph centered on the leaf blade before taking any chemical or pruning action.`
         : 'Do not apply chemical sprays or quarantine crops based on this scan. Retake a sharp, well-lit photograph centered on the leaf blade.',
@@ -180,7 +180,7 @@ function buildAnalysisResultFromUnified(
       diseaseName: `${cropTitle} — Healthy Foliage`,
       confidence: confPercent,
       severity: 'None',
-      findings: `High confidence (${confPercent}%) healthy leaf sample. Chlorophyll distribution and leaf structure appear normal.`,
+      findings: `Clear healthy leaf sample (${confPercent}% confidence). Green leaf color, surface, and vein structure look normal.`,
       recommendedAction:
         decision?.primary_action ||
         'Continue standard agronomic monitoring and scheduled irrigation.',
@@ -199,7 +199,6 @@ function buildAnalysisResultFromUnified(
       sensorStale,
       sensorTelemetry,
       decision,
-
       weatherAvailable,
       weather,
       insights,
@@ -217,13 +216,13 @@ function buildAnalysisResultFromUnified(
   if (pred.confidence >= 0.85) severity = 'Moderate';
   else if (pred.confidence < 0.60) severity = 'Mild';
 
-  let findings = `YOLO vision model detected foliar symptoms consistent with ${conditionTitle} on ${cropTitle} with ${confPercent}% confidence.`;
+  let findings = `Foliar symptoms identified consistent with ${conditionTitle} on ${cropTitle} (${confPercent}% confidence).`;
   if (isBlight) {
-    findings += ' Visible lesions and tissue discoloration observed.';
+    findings += ' Visible lesions and tissue discoloration observed on the leaf.';
   } else if (isSpot) {
-    findings += ' Characteristic localized spots or chlorotic halos identified.';
+    findings += ' Characteristic localized spots or chlorotic halos identified on the surface.';
   } else if (isRust) {
-    findings += ' Pustule or rust-like discoloration detected on leaf surface.';
+    findings += ' Pustule or rust-like discoloration detected on the leaf blade.';
   }
 
   const practices = [
@@ -391,7 +390,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
             confidence: 0,
             severity: 'None',
             findings:
-              'The vision model analyzed the leaf image and detected no recognizable foliar disease patterns or lesions above threshold. If crop distress is suspected, please capture a clear, well-lit close-up photograph of the affected leaf.',
+              'The crop leaf scan detected no recognizable foliar disease patterns or damage lesions above threshold. If crop distress is suspected, please take a clear, well-lit close-up photograph of the affected leaf.',
             recommendedAction:
               dec?.primary_action ||
               'No obvious foliar disease symptoms identified. Continue regular field monitoring and scheduled irrigation.',
@@ -458,21 +457,21 @@ export const ScanView: React.FC<ScanViewProps> = ({
       {/* View Header */}
       <div className="bg-white rounded-2xl p-4 md:p-5 border border-slate-200 shadow-sm flex items-center justify-between">
         <div>
-          <h2 className="text-base md:text-lg font-bold text-slate-900">Crop Health & Field Analysis</h2>
+          <h2 className="text-base md:text-lg font-bold text-slate-900">Check Leaf Health</h2>
           <p className="text-xs md:text-sm text-slate-600 mt-0.5">
-            Capture a leaf photograph for unified analysis combining YOLO disease detection, field sensors, and weather.
+            Take a leaf photo to diagnose crop health alongside real-time soil moisture and weather.
           </p>
         </div>
 
         {isLiveScan ? (
-          <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-            <span>Live Unified Analysis</span>
+          <span className="text-xs font-bold text-emerald-900 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+            <span>Field Analysis Active</span>
           </span>
         ) : (
-          <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full border border-amber-200 flex items-center gap-1">
-            <Sparkles className="w-3 h-3 text-amber-600" />
-            <span>{isRealData ? 'Ready for Leaf Scan' : 'Simulated Data'}</span>
+          <span className="text-xs font-bold text-amber-900 bg-amber-100 px-3 py-1 rounded-full border border-amber-300 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+            <span>Ready for Leaf Photo</span>
           </span>
         )}
       </div>
@@ -483,20 +482,18 @@ export const ScanView: React.FC<ScanViewProps> = ({
         <div className="lg:col-span-5 bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
                 Camera Viewfinder
               </span>
-              <span className="text-[10px] font-semibold text-slate-400">
+              <span className="text-xs font-semibold text-slate-500">
                 {stage === 'result'
-                  ? isLiveScan
-                    ? 'Unified Analysis Completed'
-                    : 'Scan Completed'
+                  ? 'Check Completed'
                   : stage === 'analyzing'
-                  ? 'Analyzing...'
+                  ? 'Checking Leaf...'
                   : stage === 'preview'
                   ? 'Photo Selected'
                   : stage === 'error'
-                  ? 'Error'
+                  ? 'Attention Needed'
                   : 'Ready'}
               </span>
             </div>
@@ -518,8 +515,8 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   <p className="text-xs md:text-sm font-semibold text-slate-200">
                     Point camera at a single crop leaf
                   </p>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Capture under natural light or upload an image
+                  <p className="text-xs text-slate-400 mt-1">
+                    Capture in daylight or choose a saved photo
                   </p>
                 </div>
               )}
@@ -539,26 +536,21 @@ export const ScanView: React.FC<ScanViewProps> = ({
                       <div className="w-12 h-12 rounded-full border-4 border-farm-300 border-t-farm-600 animate-spin mb-3" />
                       <div className="flex items-center gap-1.5 text-xs font-black tracking-wider text-farm-300 uppercase">
                         <Scan className="w-4 h-4 animate-pulse" />
-                        <span>Running Multimodal Analysis</span>
+                        <span>Checking Leaf Health...</span>
                       </div>
-                      <p className="text-[11px] text-slate-300 mt-1 font-medium">
-                        Evaluating YOLO model, soil moisture & weather telemetry...
+                      <p className="text-xs text-slate-300 mt-1 font-medium text-center">
+                        Correlating symptoms with soil moisture & weather conditions...
                       </p>
                     </div>
                   )}
 
                   {/* Result completed badge overlay */}
                   {stage === 'result' && isLiveScan && (
-                    <div className="absolute bottom-2 left-2 right-2 bg-slate-900/85 backdrop-blur-sm border border-slate-700/80 rounded-lg px-2.5 py-1.5 flex items-center justify-between text-[11px] text-white z-10">
-                      <span className="flex items-center gap-1 text-emerald-400 font-semibold">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
+                    <div className="absolute bottom-2 left-2 right-2 bg-slate-900/90 backdrop-blur-sm border border-slate-700 rounded-lg px-3 py-2 flex items-center justify-between text-xs text-white z-10">
+                      <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                        <CheckCircle2 className="w-4 h-4" />
                         {analysisResult.condition ? formatConditionName(analysisResult.condition) : 'Analyzed'}
                       </span>
-                      {inferenceTime && (
-                        <span className="text-slate-400 font-mono text-[10px]">
-                          {inferenceTime} ms
-                        </span>
-                      )}
                     </div>
                   )}
                 </div>
@@ -608,10 +600,10 @@ export const ScanView: React.FC<ScanViewProps> = ({
               </div>
 
               <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 text-xs text-slate-600 space-y-1.5">
-                <span className="font-bold text-slate-800 block">How unified analysis works:</span>
-                <p className="leading-relaxed">1. Centered leaf photo is examined with the YOLO crop-disease model.</p>
-                <p className="leading-relaxed">2. Soil moisture & rain readings from your field node are retrieved.</p>
-                <p className="leading-relaxed">3. Local weather forecasts correlate disease risk with upcoming conditions.</p>
+                <span className="font-bold text-slate-800 block">How leaf health check works:</span>
+                <p className="leading-relaxed">1. Clear leaf photo is inspected for fungal, bacterial, or blight spots.</p>
+                <p className="leading-relaxed">2. Soil moisture & rain readings from your field node are factored in.</p>
+                <p className="leading-relaxed">3. Local weather forecasts help identify high-risk disease spread conditions.</p>
               </div>
             </div>
           )}
@@ -622,14 +614,14 @@ export const ScanView: React.FC<ScanViewProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Review Leaf Photo</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Confirm the leaf spots and details are clearly visible before running unified diagnosis.
+                  Confirm the leaf spots and details are clearly visible before checking health.
                 </p>
               </div>
 
               {selectedFile && (
                 <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs flex items-center justify-between text-slate-600">
                   <span className="font-medium truncate max-w-[200px]">{selectedFile.name}</span>
-                  <span className="text-slate-400 font-mono text-[11px]">
+                  <span className="text-slate-400 font-mono text-xs">
                     {(selectedFile.size / 1024).toFixed(1)} KB
                   </span>
                 </div>
@@ -642,7 +634,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   className="flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-farm-700 hover:bg-farm-800 text-white font-bold text-xs md:text-sm active:scale-95 transition shadow-sm"
                 >
                   <Scan className="w-4 h-4" />
-                  <span>Analyze Leaf & Farm</span>
+                  <span>Check Leaf Health</span>
                 </button>
 
                 <button
@@ -660,14 +652,10 @@ export const ScanView: React.FC<ScanViewProps> = ({
           {stage === 'analyzing' && (
             <div className="bg-white rounded-2xl p-8 border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center space-y-3">
               <div className="w-14 h-14 rounded-full border-4 border-farm-200 border-t-farm-700 animate-spin" />
-              <h3 className="text-sm font-bold text-slate-900">Running Multimodal Farm Analysis...</h3>
-              <p className="text-xs text-slate-500 max-w-sm leading-relaxed">
-                Correlating leaf vision patterns with localized soil moisture, ambient temperature, and weather forecasts.
+              <h3 className="text-base font-bold text-slate-900">Checking Leaf & Field Conditions...</h3>
+              <p className="text-xs text-slate-600 max-w-sm leading-relaxed">
+                Checking leaf patterns against common crop diseases, current soil moisture, and weather forecast.
               </p>
-              <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
-                <Cpu className="w-3.5 h-3.5 text-farm-600" />
-                <span>POST /api/v1/farm/analyze</span>
-              </div>
             </div>
           )}
 
@@ -684,29 +672,23 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">
-                    {isOfflineError ? 'Device Offline / Gateway Unavailable' : 'Analysis Failed'}
+                    {isOfflineError ? 'Field Gateway Offline' : 'Analysis Incomplete'}
                   </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">
+                  <p className="text-xs text-slate-600 mt-0.5">
                     {isOfflineError
-                      ? 'Cannot reach the farm analysis service at the configured backend address.'
-                      : 'The analysis service encountered an error while processing this request.'}
+                      ? 'Could not reach your farm gateway service. Please check your network connection.'
+                      : 'An error occurred while evaluating the leaf photo.'}
                   </p>
                 </div>
               </div>
 
               <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 text-xs space-y-1.5">
-                <div className="flex items-center justify-between text-slate-500 text-[11px]">
-                  <span>Backend Endpoint:</span>
-                  <code className="font-mono text-slate-700 bg-slate-200/70 px-1.5 py-0.5 rounded">
-                    POST /api/v1/farm/analyze
-                  </code>
-                </div>
-                <div className="text-slate-700 leading-relaxed font-medium">
-                  {errorMessage || 'Unable to connect to local gateway.'}
+                <div className="text-slate-800 leading-relaxed font-medium">
+                  {errorMessage || 'Unable to connect to field gateway.'}
                 </div>
                 {isOfflineError && (
-                  <p className="text-[11px] text-amber-800 pt-1 leading-relaxed">
-                    Ensure the FastAPI server is running with YOLO dependencies installed.
+                  <p className="text-xs text-amber-900 pt-1 leading-relaxed font-medium">
+                    Ensure the farm server is powered on and connected to your local network.
                   </p>
                 )}
               </div>
@@ -738,46 +720,40 @@ export const ScanView: React.FC<ScanViewProps> = ({
               {/* Result Header Badge */}
               <div className="flex items-center justify-between">
                 {analysisResult.reliabilityTier === 'INCONCLUSIVE' ? (
-                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full border border-amber-300 bg-amber-100 text-amber-900 flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Low Confidence / Inconclusive</span>
+                  <span className="text-xs font-bold px-3 py-1 rounded-full border border-amber-300 bg-amber-100 text-amber-900 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Unclear Photo / Inconclusive</span>
                   </span>
                 ) : analysisResult.reliabilityTier === 'NO_DETECTION' ? (
-                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full border border-slate-200 bg-slate-100 text-slate-800 flex items-center gap-1.5">
+                  <span className="text-xs font-bold px-3 py-1 rounded-full border border-slate-300 bg-slate-100 text-slate-800 flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-slate-600" />
-                    <span>No Symptoms Detected</span>
+                    <span>No Disease Symptoms Detected</span>
                   </span>
-                ) : isLiveScan ? (
+                ) : (
                   <span
-                    className={`text-[11px] font-bold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${
+                    className={`text-xs font-bold px-3 py-1 rounded-full border flex items-center gap-1.5 ${
                       analysisResult.severity === 'None'
-                        ? 'bg-emerald-100 text-emerald-900 border-emerald-200'
-                        : 'bg-rose-100 text-rose-900 border-rose-200'
+                        ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                        : 'bg-rose-100 text-rose-900 border-rose-300'
                     }`}
                   >
                     {analysisResult.severity === 'None' ? (
                       <>
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Live Unified Analysis</span>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Foliage Appears Healthy</span>
                       </>
                     ) : (
                       <>
-                        <AlertOctagon className="w-3.5 h-3.5 text-rose-600" />
-                        <span>Live Unified Analysis</span>
+                        <AlertOctagon className="w-3.5 h-3.5 text-rose-700" />
+                        <span>Foliar Issue Identified</span>
                       </>
                     )}
-                  </span>
-                ) : (
-                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-200 flex items-center gap-1">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Simulated Data</span>
                   </span>
                 )}
 
                 {analysisResult.reliabilityTier === 'NO_DETECTION' ? (
                   <span className="text-xs font-bold text-slate-500">
-                    Detection:{' '}
-                    <span className="text-slate-700 font-semibold">None (&lt;25%)</span>
+                    Confidence: <span className="text-slate-700 font-semibold">--</span>
                   </span>
                 ) : analysisResult.reliabilityTier === 'INCONCLUSIVE' ? (
                   <span className="text-xs font-bold text-amber-800">
@@ -787,10 +763,10 @@ export const ScanView: React.FC<ScanViewProps> = ({
                     </span>
                   </span>
                 ) : (
-                  <span className="text-xs font-bold text-slate-500">
+                  <span className="text-xs font-bold text-slate-600">
                     Confidence:{' '}
                     <span className="text-slate-900 font-black">
-                      {analysisResult.confidence}%{isLiveScan ? ' (Live YOLO)' : ' (Simulated)'}
+                      {analysisResult.confidence}%
                     </span>
                   </span>
                 )}
@@ -870,31 +846,31 @@ export const ScanView: React.FC<ScanViewProps> = ({
               {/* MULTIMODAL TELEMETRY GRID: Field Sensors & Live Weather */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {/* Panel 1: Field Sensor Telemetry */}
-                <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs space-y-2">
+                <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 text-xs space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                      <Droplets className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                      <Droplets className="w-4 h-4 text-blue-600" />
                       <span>Field Sensors</span>
                     </span>
                     <span
-                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                      className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
                         analysisResult.sensorAvailable
-                          ? 'bg-emerald-100 text-emerald-800'
+                          ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
                           : analysisResult.sensorStale
-                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                          : 'bg-slate-200 text-slate-600'
+                          ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                          : 'bg-slate-200 text-slate-700'
                       }`}
                     >
                       {analysisResult.sensorAvailable
                         ? 'Online'
                         : analysisResult.sensorStale
-                        ? 'Offline (Stale)'
-                        : 'No Sensor Data'}
+                        ? 'Gateway Disconnected'
+                        : 'No Sensor Node'}
                     </span>
                   </div>
 
                   {analysisResult.sensorAvailable && analysisResult.sensorTelemetry ? (
-                    <div className="space-y-1 text-slate-600">
+                    <div className="space-y-1.5 text-slate-700 font-medium">
                       <div className="flex justify-between">
                         <span>Soil Moisture:</span>
                         <span className="font-bold text-slate-900">
@@ -904,23 +880,23 @@ export const ScanView: React.FC<ScanViewProps> = ({
                       </div>
                       <div className="flex justify-between">
                         <span>Temperature / Humidity:</span>
-                        <span className="font-semibold text-slate-800">
+                        <span className="font-bold text-slate-900">
                           {analysisResult.sensorTelemetry.temperature.toFixed(1)}°C •{' '}
                           {analysisResult.sensorTelemetry.humidity.toFixed(0)}%
                         </span>
                       </div>
                       {analysisResult.sensorTelemetry.rain_level != null && (
-                        <div className="flex justify-between text-[11px]">
+                        <div className="flex justify-between text-xs">
                           <span>Rain Sensor:</span>
-                          <span className="font-semibold text-slate-800">
+                          <span className="font-bold text-slate-900">
                             {analysisResult.sensorTelemetry.rain_level.toFixed(0)}%
                           </span>
                         </div>
                       )}
                       {analysisResult.decision ? (
-                        <div className="pt-1 border-t border-slate-200/80 space-y-0.5">
-                          <div className="flex justify-between items-center text-[11px]">
-                            <span>Irrigation Needed:</span>
+                        <div className="pt-2 border-t border-slate-200 space-y-1">
+                          <div className="flex justify-between items-center text-xs">
+                            <span>Irrigation Status:</span>
                             <span
                               className={
                                 formatIrrigationStatus(
@@ -938,33 +914,33 @@ export const ScanView: React.FC<ScanViewProps> = ({
                             </span>
                           </div>
                           {analysisResult.decision.primary_action && (
-                            <p className="text-[10px] text-slate-500 leading-tight">
+                            <p className="text-xs text-slate-600 leading-snug">
                               {analysisResult.decision.primary_action}
                             </p>
                           )}
                         </div>
                       ) : (
-                        <div className="flex justify-between items-center pt-1 border-t border-slate-200/80 text-[11px]">
+                        <div className="flex justify-between items-center pt-2 border-t border-slate-200 text-xs">
                           <span>Irrigation Needed:</span>
-                          <span className="text-slate-500 font-medium">Pending Data</span>
+                          <span className="text-slate-600 font-medium">Pending Data</span>
                         </div>
                       )}
                     </div>
                   ) : analysisResult.sensorStale ? (
-                    <div className="space-y-1.5 text-slate-600 py-0.5">
-                      <div className="flex items-center gap-1.5 text-amber-800 text-[11px] font-medium bg-amber-50 p-1.5 rounded border border-amber-200">
-                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 text-amber-600" />
+                    <div className="space-y-1.5 text-slate-700 py-0.5">
+                      <div className="flex items-center gap-1.5 text-amber-900 text-xs font-semibold bg-amber-50 p-2 rounded-lg border border-amber-200">
+                        <AlertTriangle className="w-4 h-4 flex-shrink-0 text-amber-600" />
                         <span>Sensor node offline (&gt;10s stale). Disconnected.</span>
                       </div>
                       {analysisResult.sensorTelemetry && (
-                        <p className="text-[10px] text-slate-500">
+                        <p className="text-xs text-slate-600 font-medium">
                           Last reading: {analysisResult.sensorTelemetry.soil_moisture.toFixed(1)}% moisture •{' '}
                           {analysisResult.sensorTelemetry.temperature.toFixed(1)}°C
                         </p>
                       )}
                     </div>
                   ) : (
-                    <p className="text-[11px] text-slate-500 italic">
+                    <p className="text-xs text-slate-600 italic">
                       No sensor telemetry ingested for this field. Diagnosis based on leaf pathology.
                     </p>
                   )}
@@ -972,17 +948,17 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </div>
 
                 {/* Panel 2: Live Weather Telemetry */}
-                <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs space-y-2">
+                <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 text-xs space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                      <CloudSun className="w-3.5 h-3.5 text-amber-600" />
+                    <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                      <CloudSun className="w-4 h-4 text-amber-600" />
                       <span>Local Weather</span>
                     </span>
                     <span
-                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                      className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
                         analysisResult.weatherAvailable
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-slate-200 text-slate-600'
+                          ? 'bg-blue-100 text-blue-900 border border-blue-200'
+                          : 'bg-slate-200 text-slate-700'
                       }`}
                     >
                       {analysisResult.weatherAvailable ? 'Live Telemetry' : 'Offline'}
@@ -990,7 +966,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   </div>
 
                   {analysisResult.weatherAvailable && analysisResult.weather ? (
-                    <div className="space-y-1 text-slate-600">
+                    <div className="space-y-1.5 text-slate-700 font-medium">
                       <div className="flex justify-between">
                         <span className="truncate max-w-[130px]">{analysisResult.weather.location}:</span>
                         <span className="font-bold text-slate-900">
@@ -999,33 +975,33 @@ export const ScanView: React.FC<ScanViewProps> = ({
                       </div>
                       <div className="flex justify-between">
                         <span>Precipitation Chance:</span>
-                        <span className="font-semibold text-slate-800">
+                        <span className="font-bold text-slate-900">
                           {analysisResult.weather.rain_probability.toFixed(0)}%
                         </span>
                       </div>
                       {analysisResult.weather.is_rain_forecasted && (
-                        <div className="pt-1 text-[11px] text-blue-800 font-semibold flex items-center gap-1">
-                          <CloudRain className="w-3 h-3 text-blue-600" />
+                        <div className="pt-1.5 text-xs text-blue-900 font-bold flex items-center gap-1.5">
+                          <CloudRain className="w-4 h-4 text-blue-600" />
                           <span>Rain forecasted in near term</span>
                         </div>
                       )}
                     </div>
                   ) : (
-                    <p className="text-[11px] text-slate-500 italic">
+                    <p className="text-xs text-slate-600 italic">
                       Weather service not configured or unreachable. Analysis operates gracefully.
                     </p>
                   )}
                 </div>
               </div>
 
-              {/* CROSS-MODAL AGRONOMIC INSIGHTS */}
+              {/* FIELD & WEATHER ADVISORY */}
               {analysisResult.insights && analysisResult.insights.length > 0 && (
-                <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-xl p-3.5 space-y-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
-                    <span>Cross-Modal Agronomic Insights:</span>
+                <div className="bg-emerald-50/80 border border-emerald-300 rounded-xl p-4 space-y-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-950 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-emerald-700" />
+                    <span>Field & Weather Advisory:</span>
                   </span>
-                  <ul className="space-y-1.5 text-xs text-slate-700 leading-relaxed font-medium">
+                  <ul className="space-y-1.5 text-xs text-slate-800 leading-relaxed font-medium">
                     {analysisResult.insights.map((insight, idx) => (
                       <li key={idx} className="flex items-start gap-2">
                         <span className="text-emerald-700 font-bold mt-0.5">•</span>
@@ -1036,10 +1012,10 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </div>
               )}
 
-              {/* Recommended Action */}
-              <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-200">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800 block mb-1">
-                  Recommended Action:
+              {/* What to do now */}
+              <div className="bg-amber-50/90 rounded-xl p-4 border border-amber-300">
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-900 block mb-1">
+                  What to do now:
                 </span>
                 <p className="text-xs md:text-sm font-bold text-amber-950 leading-relaxed">
                   "{analysisResult.recommendedAction}"
@@ -1047,11 +1023,11 @@ export const ScanView: React.FC<ScanViewProps> = ({
               </div>
 
               {/* Safe Agricultural Practices */}
-              <div className="space-y-1.5 pt-1">
-                <span className="text-xs font-bold text-slate-700 block">
-                  Safe Management Guidelines:
+              <div className="space-y-2 pt-1">
+                <span className="text-xs font-bold text-slate-700 block uppercase tracking-wider">
+                  Safe Crop Care Guidelines:
                 </span>
-                <ul className="space-y-1.5 text-xs text-slate-600">
+                <ul className="space-y-2 text-xs text-slate-700 font-medium">
                   {analysisResult.safePractices.map((practice, idx) => (
                     <li key={idx} className="flex items-start gap-2">
                       <CheckCircle2 className="w-4 h-4 text-farm-600 shrink-0 mt-0.5" />
@@ -1068,7 +1044,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   type="button"
                   className="py-3 px-4 rounded-xl bg-farm-700 hover:bg-farm-800 text-white font-bold text-xs md:text-sm active:scale-95 transition text-center shadow-sm"
                 >
-                  View Advice
+                  View Irrigation Advice
                 </button>
                 <button
                   onClick={resetScan}
@@ -1076,7 +1052,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   className="flex items-center justify-center gap-1.5 py-3 px-4 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-800 font-bold text-xs md:text-sm active:scale-95 transition text-center"
                 >
                   <RefreshCw className="w-3.5 h-3.5 text-slate-600" />
-                  <span>Scan Another</span>
+                  <span>Scan Another Leaf</span>
                 </button>
               </div>
             </div>

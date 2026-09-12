@@ -24,90 +24,86 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onNavigateToCropHealth,
 }) => {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 md:gap-4 pb-20 lg:pb-8">
-      {/* Row 1: Farm Card (Full width across all screen sizes) */}
-      <div className="md:col-span-2 lg:col-span-3 order-1">
-        <FarmCard
-          profile={state.profile}
-          lastUpdated={state.lastUpdated}
-          isRealData={state.isRealData}
-        />
+    <div className="space-y-4 md:space-y-5 pb-20 lg:pb-8">
+      {/* 1. HERO: Immediate Farm Advice / Action Required Banner */}
+      <ActionRequiredCard
+        action={state.recommendation}
+        onViewAdvice={onNavigateToIrrigation}
+      />
+
+      {/* 2. QUICK ACTIONS BAR: Check Leaf Health & Irrigation Details */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <button
+          onClick={onNavigateToScan}
+          className="flex items-center justify-between p-4 rounded-2xl bg-gradient-to-r from-farm-700 to-farm-800 text-white shadow-sm hover:from-farm-800 hover:to-farm-900 active:scale-[0.98] transition group text-left"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center text-white shrink-0">
+              <Camera className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-sm md:text-base font-bold block leading-tight">
+                Check Leaf Health
+              </span>
+              <span className="text-xs text-farm-100 mt-0.5 block font-medium">
+                Scan leaf photo for disease symptoms
+              </span>
+            </div>
+          </div>
+          <ArrowRight className="w-5 h-5 text-white/80 group-hover:translate-x-0.5 transition-transform shrink-0" />
+        </button>
+
+        <button
+          onClick={onNavigateToIrrigation}
+          className="flex items-center justify-between p-4 rounded-2xl bg-white border border-slate-200 text-slate-900 shadow-sm hover:bg-slate-50 active:scale-[0.98] transition group text-left"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shrink-0">
+              <Camera className="hidden" />
+              <svg className="w-5 h-5 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+            </div>
+            <div>
+              <span className="text-sm md:text-base font-bold block leading-tight">
+                Irrigation & Moisture
+              </span>
+              <span className="text-xs text-slate-500 mt-0.5 block font-medium">
+                View soil water levels & weather forecast
+              </span>
+            </div>
+          </div>
+          <ArrowRight className="w-5 h-5 text-slate-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
+        </button>
       </div>
 
-      {/* Recommended Action:
-          Mobile: order-2 (immediately prominent below Farm Card)
-          Tablet: order-2 (spans 2 cols)
-          Desktop: order-3 (Row 3, spanning the entire 3-column width)
-      */}
-      <div className="md:col-span-2 lg:col-span-3 order-2 lg:order-3">
-        <ActionRequiredCard
-          action={state.recommendation}
-          onViewAdvice={onNavigateToIrrigation}
-          isRealData={state.isRealData}
-        />
-      </div>
+      {/* 3. FARM PROFILE: Farm Name, Crop Type, Field & Last Refresh */}
+      <FarmCard
+        profile={state.profile}
+        lastUpdated={state.lastUpdated}
+      />
 
-      {/* Row 2 on Desktop: 3-column triage of crop indicators */}
-      {/* Crop Health Card */}
-      <div className="md:col-span-1 lg:col-span-1 order-5 md:order-4 lg:order-2 flex flex-col">
+      {/* 4. THREE-PANEL FIELD TRIAGE: Crop Health, Soil Moisture, Weather */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 md:gap-4">
         <CropHealthCard
           status={state.cropHealth.status}
           diseaseRisk={state.cropHealth.diseaseRisk}
           summary={state.cropHealth.summary}
           onViewDetails={onNavigateToCropHealth}
-          isRealData={state.isRealData}
         />
-      </div>
 
-      {/* Water Status Card */}
-      <div className="md:col-span-1 lg:col-span-1 order-4 md:order-3 lg:order-2 flex flex-col">
         <WaterStatusCard
           moisture={state.soilMoisture}
           onViewAdvice={onNavigateToIrrigation}
-          isRealData={state.isRealData}
         />
-      </div>
 
-      {/* Weather Card */}
-      <div className="md:col-span-1 lg:col-span-1 order-6 md:order-5 lg:order-2 flex flex-col">
         <WeatherCard
           weather={state.weather}
-          isRealData={state.isRealData}
         />
       </div>
 
-      {/* Row 4 on Desktop: Field Risks (Water Stress | Heat Stress | Disease Risk) */}
-      <div className="md:col-span-2 lg:col-span-3 order-7 lg:order-4">
-        <RiskSummaryCards
-          risks={state.risks}
-          isRealData={state.isRealData}
-        />
-      </div>
-
-      {/* Row 5 on Desktop: Quick Crop Scan Banner Card */}
-      <div className="md:col-span-1 lg:col-span-3 order-3 md:order-6 lg:order-5">
-        <div className="bg-gradient-to-r from-farm-700 to-farm-800 rounded-2xl p-4 md:p-5 text-white shadow-md shadow-farm-900/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 h-full">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center text-white shrink-0">
-              <Camera className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-sm md:text-base font-bold leading-tight">Scan Your Crop</h3>
-              <p className="text-xs md:text-sm text-farm-100 mt-0.5">
-                Take a clear leaf photo to check for possible disease symptoms.
-              </p>
-            </div>
-          </div>
-
-          <button
-            onClick={onNavigateToScan}
-            className="flex items-center justify-center gap-1.5 text-xs md:text-sm font-bold px-4 py-2.5 rounded-xl bg-white text-farm-800 hover:bg-farm-50 active:scale-95 transition shadow-sm shrink-0 self-start sm:self-auto"
-          >
-            <span>Scan Crop</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
+      {/* 5. DETAILED FIELD RISKS: Water Stress, Heat Stress, Disease Spread */}
+      <RiskSummaryCards
+        risks={state.risks}
+      />
     </div>
   );
 };

@@ -9,15 +9,15 @@ interface RiskSummaryCardsProps {
   isRealData?: boolean;
 }
 
-export const RiskSummaryCards: React.FC<RiskSummaryCardsProps> = ({ risks, isRealData = false }) => {
+export const RiskSummaryCards: React.FC<RiskSummaryCardsProps> = ({ risks }) => {
   const getBadgeStyle = (level: RiskLevel) => {
     switch (level) {
       case 'HIGH':
-        return 'bg-rose-100 text-rose-800 border-rose-200';
+        return 'bg-rose-100 text-rose-900 border-rose-300';
       case 'MEDIUM':
-        return 'bg-amber-100 text-amber-800 border-amber-200';
+        return 'bg-amber-100 text-amber-900 border-amber-300';
       case 'LOW':
-        return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+        return 'bg-emerald-100 text-emerald-900 border-emerald-300';
     }
   };
 
@@ -36,45 +36,36 @@ export const RiskSummaryCards: React.FC<RiskSummaryCardsProps> = ({ risks, isRea
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-2 px-1">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-          Field Stress & Risks
+      <div className="flex items-center justify-between mb-2.5 px-1">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+          Field Stress & Disease Risk Breakdown
         </h3>
-        <span
-          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-            isRealData
-              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-              : 'bg-amber-50 text-amber-800 border-amber-200'
-          }`}
-        >
-          {isRealData ? 'Live Sensor Data' : 'Simulated Data'}
-        </span>
       </div>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
         {risks.map((risk) => (
           <div
             key={risk.id}
-            className="bg-white rounded-2xl p-3 border border-slate-200 shadow-sm flex flex-col justify-between"
+            className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col justify-between"
           >
             <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="w-7 h-7 rounded-lg bg-slate-50 flex items-center justify-center">
+              <div className="flex items-center justify-between mb-2">
+                <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center border border-slate-100">
                   {getIcon(risk.id)}
                 </div>
                 <span
-                  className={`text-[9px] font-black px-1.5 py-0.5 rounded-full border ${getBadgeStyle(
+                  className={`text-xs font-black px-2 py-0.5 rounded-full border ${getBadgeStyle(
                     risk.level
                   )}`}
                 >
                   {risk.level}
                 </span>
               </div>
-              <h4 className="text-xs font-bold text-slate-900 leading-tight">
+              <h4 className="text-sm font-bold text-slate-900 leading-tight">
                 {risk.name}
               </h4>
             </div>
 
-            <p className="text-[10px] text-slate-500 mt-2 line-clamp-3 leading-snug">
+            <p className="text-xs text-slate-600 mt-2.5 leading-relaxed font-medium">
               {risk.explanation}
             </p>
           </div>

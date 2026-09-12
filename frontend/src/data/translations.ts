@@ -47,7 +47,7 @@ export interface TranslationDict {
 
 export const translations: Record<AppLanguage, TranslationDict> = {
   en: {
-    appTitle: 'Farm Assistant',
+    appTitle: 'KhetSaathi',
     myFarm: 'My Farm',
     crop: 'Crop',
     field: 'Field',
@@ -83,10 +83,10 @@ export const translations: Record<AppLanguage, TranslationDict> = {
     fieldNav: 'Field',
     alerts: 'Alerts',
     settings: 'Settings',
-    askAssistant: 'Ask Farm Assistant',
+    askAssistant: 'Ask KhetSaathi',
   },
   hi: {
-    appTitle: 'कृषि सहायक',
+    appTitle: 'खेतसाथी | स्मार्ट खेती सहायक',
     myFarm: 'मेरा खेत',
     crop: 'फसल',
     field: 'खेत',
@@ -122,6 +122,6 @@ export const translations: Record<AppLanguage, TranslationDict> = {
     fieldNav: 'खेत',
     alerts: 'सूचनाएं',
     settings: 'सेटिंग्स',
-    askAssistant: 'कृषि सहायक से पूछें',
+    askAssistant: 'खेतसाथी से पूछें',
   },
 };
