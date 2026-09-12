@@ -57,24 +57,91 @@ def get_connection(db_path: Optional[Union[str, Path]] = None) -> sqlite3.Connec
     """
     Creates and returns a SQLite connection with Row factory enabled.
     Ensures parent directories exist before connecting.
+    Enables SQLite foreign keys for every connection.
     """
     resolved_path = _resolve_path(db_path)
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(resolved_path), timeout=15.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
 
 def init_db(db_path: Optional[Union[str, Path]] = None) -> None:
     """
-    Initializes the SQLite database schema if it does not exist.
-    Safe to call multiple times; will never overwrite or destroy existing data.
+    Initializes the SQLite database schema and Phase 2 relational tables if they do not exist.
+    Performs non-destructive schema upgrades (e.g. adds field_id to sensor_telemetry if missing).
+    Safe to call multiple times; will never overwrite or destroy existing telemetry.
     """
     resolved_path = _resolve_path(db_path)
     logger.info("Initializing SQLite database at: %s", resolved_path)
 
     with get_connection(resolved_path) as conn:
         cursor = conn.cursor()
+
+        # 1. Farmers table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS farmers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                phone TEXT UNIQUE NOT NULL,
+                preferred_language TEXT NOT NULL DEFAULT 'en',
+                state TEXT,
+                district TEXT,
+                village TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1
+            );
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_farmers_phone ON farmers (phone);
+        """)
+
+        # 2. Fields table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS fields (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT UNIQUE NOT NULL,
+                farmer_id INTEGER NOT NULL REFERENCES farmers(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                crop_type TEXT NOT NULL,
+                sowing_date TEXT,
+                soil_type TEXT,
+                area_acres REAL,
+                latitude REAL,
+                longitude REAL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1
+            );
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_fields_farmer_id ON fields (farmer_id);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_fields_uuid ON fields (uuid);
+        """)
+
+        # 3. Sensors table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sensors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sensor_id TEXT UNIQUE NOT NULL,
+                field_id INTEGER REFERENCES fields(id) ON DELETE SET NULL,
+                hardware_type TEXT NOT NULL DEFAULT 'ESP32_DHT22_CAPACITIVE',
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                last_seen_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sensors_field_id ON sensors (field_id);
+        """)
+
+        # 4. Sensor telemetry table (preserves all existing columns, adds field_id)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS sensor_telemetry (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,9 +151,17 @@ def init_db(db_path: Optional[Union[str, Path]] = None) -> None:
                 soil_moisture REAL NOT NULL,
                 rain_level REAL,
                 battery_voltage REAL,
-                timestamp TEXT NOT NULL
+                timestamp TEXT NOT NULL,
+                field_id INTEGER REFERENCES fields(id) ON DELETE SET NULL
             );
         """)
+
+        # Non-destructive check & addition of field_id for existing databases
+        cursor.execute("PRAGMA table_info(sensor_telemetry);")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "field_id" not in columns:
+            cursor.execute("ALTER TABLE sensor_telemetry ADD COLUMN field_id INTEGER REFERENCES fields(id) ON DELETE SET NULL;")
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp 
             ON sensor_telemetry (timestamp DESC);
@@ -95,6 +170,63 @@ def init_db(db_path: Optional[Union[str, Path]] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_telemetry_sensor_timestamp 
             ON sensor_telemetry (sensor_id, timestamp DESC);
         """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_telemetry_field_timestamp 
+            ON sensor_telemetry (field_id, timestamp DESC);
+        """)
+
+        # 5. Alerts table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT UNIQUE NOT NULL,
+                farmer_id INTEGER NOT NULL REFERENCES farmers(id) ON DELETE CASCADE,
+                field_id INTEGER REFERENCES fields(id) ON DELETE SET NULL,
+                alert_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                action_recommended TEXT,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                created_at TEXT NOT NULL,
+                acknowledged_at TEXT,
+                resolved_at TEXT
+            );
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alerts_farmer_status_created 
+            ON alerts (farmer_id, status, created_at DESC);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alerts_field_status_created 
+            ON alerts (field_id, status, created_at DESC);
+        """)
+
+        # 6. Notifications table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                alert_id INTEGER NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+                farmer_id INTEGER NOT NULL REFERENCES farmers(id) ON DELETE CASCADE,
+                channel TEXT NOT NULL,
+                status TEXT NOT NULL,
+                recipient TEXT,
+                provider_message_id TEXT,
+                error_message TEXT,
+                sent_at TEXT,
+                delivered_at TEXT,
+                read_at TEXT
+            );
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_notifications_alert_id 
+            ON notifications (alert_id);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_notifications_farmer_status 
+            ON notifications (farmer_id, status);
+        """)
+
         conn.commit()
 
 
@@ -104,6 +236,8 @@ def insert_reading(
 ) -> int:
     """
     Inserts a validated SensorReading into the SQLite database.
+    Automatically resolves sensor_id -> field_id if registered in sensors table.
+    Updates sensor's last_seen_at timestamp if sensor exists.
     Timestamp is formatted and stored consistently in UTC ISO-8601.
     Returns the integer primary key id of the newly inserted row.
     """
@@ -122,6 +256,12 @@ def insert_reading(
     try:
         with conn:
             cursor = conn.cursor()
+
+            # Resolve sensor_id -> field_id automatically
+            cursor.execute("SELECT field_id FROM sensors WHERE sensor_id = ? LIMIT 1;", (reading.sensor_id,))
+            sensor_row = cursor.fetchone()
+            field_id = sensor_row["field_id"] if sensor_row and sensor_row["field_id"] is not None else None
+
             cursor.execute(
                 """
                 INSERT INTO sensor_telemetry (
@@ -131,8 +271,9 @@ def insert_reading(
                     soil_moisture,
                     rain_level,
                     battery_voltage,
-                    timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?);
+                    timestamp,
+                    field_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     reading.sensor_id,
@@ -142,11 +283,20 @@ def insert_reading(
                     reading.rain_level,
                     reading.battery_voltage,
                     ts_str,
+                    field_id,
                 ),
             )
             row_id = cursor.lastrowid
             if row_id is None:
                 raise sqlite3.OperationalError("Failed to obtain lastrowid after telemetry insertion")
+
+            # Update sensor last_seen_at if registered
+            if sensor_row is not None:
+                cursor.execute(
+                    "UPDATE sensors SET last_seen_at = ?, updated_at = ? WHERE sensor_id = ?;",
+                    (ts_str, ts_str, reading.sensor_id),
+                )
+
             return row_id
     finally:
         conn.close()
@@ -170,7 +320,7 @@ def get_latest_reading(
             cursor.execute(
                 """
                 SELECT id, sensor_id, temperature, humidity, soil_moisture,
-                       rain_level, battery_voltage, timestamp
+                       rain_level, battery_voltage, timestamp, field_id
                 FROM sensor_telemetry
                 WHERE sensor_id = ?
                 ORDER BY timestamp DESC, id DESC
@@ -182,7 +332,7 @@ def get_latest_reading(
             cursor.execute(
                 """
                 SELECT id, sensor_id, temperature, humidity, soil_moisture,
-                       rain_level, battery_voltage, timestamp
+                       rain_level, battery_voltage, timestamp, field_id
                 FROM sensor_telemetry
                 ORDER BY timestamp DESC, id DESC
                 LIMIT 1;
@@ -217,7 +367,7 @@ def get_recent_readings(
             cursor.execute(
                 """
                 SELECT id, sensor_id, temperature, humidity, soil_moisture,
-                       rain_level, battery_voltage, timestamp
+                       rain_level, battery_voltage, timestamp, field_id
                 FROM sensor_telemetry
                 WHERE sensor_id = ?
                 ORDER BY timestamp DESC, id DESC
@@ -229,7 +379,7 @@ def get_recent_readings(
             cursor.execute(
                 """
                 SELECT id, sensor_id, temperature, humidity, soil_moisture,
-                       rain_level, battery_voltage, timestamp
+                       rain_level, battery_voltage, timestamp, field_id
                 FROM sensor_telemetry
                 ORDER BY timestamp DESC, id DESC
                 LIMIT ?;

@@ -439,3 +439,343 @@ class TestDecisionEndpoint:
         assert response.status_code == 404
         assert "No sensor reading found for sensor_id 'node_absent'" in response.json()["detail"]
 
+
+class TestPhase2DatabaseFoundation:
+    """
+    Validates Phase 2 relational database schema:
+    Farmer -> Fields -> Sensors -> Telemetry
+    Farmer -> Alerts -> Notifications
+    """
+
+    def test_phase2_tables_and_indexes_exist(self, setup_test_db):
+        """Verifies all Phase 2 tables and required indexes exist upon init_db."""
+        conn = sqlite3.connect(str(setup_test_db))
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = {row[0] for row in cursor.fetchall()}
+        expected_tables = {"farmers", "fields", "sensors", "sensor_telemetry", "alerts", "notifications"}
+        assert expected_tables.issubset(tables)
+
+        cursor.execute("PRAGMA table_info(sensor_telemetry);")
+        telemetry_cols = {row[1] for row in cursor.fetchall()}
+        assert "field_id" in telemetry_cols
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='index';")
+        indexes = {row[0] for row in cursor.fetchall()}
+        expected_indexes = {
+            "idx_farmers_phone",
+            "idx_fields_farmer_id",
+            "idx_fields_uuid",
+            "idx_sensors_field_id",
+            "idx_telemetry_timestamp",
+            "idx_telemetry_sensor_timestamp",
+            "idx_telemetry_field_timestamp",
+            "idx_alerts_farmer_status_created",
+            "idx_alerts_field_status_created",
+            "idx_notifications_alert_id",
+            "idx_notifications_farmer_status",
+        }
+        assert expected_indexes.issubset(indexes)
+        conn.close()
+
+    def test_farmer_creation(self, setup_test_db):
+        """Verifies creating a farmer record with valid fields."""
+        conn = sqlite3.connect(str(setup_test_db))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO farmers (uuid, name, phone, preferred_language, state, district, village, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'));
+            """,
+            ("f-uuid-1", "Harpal Singh", "+919876543210", "pa", "Punjab", "Ludhiana", "Jagraon"),
+        )
+        conn.commit()
+        farmer_id = cursor.lastrowid
+
+        cursor.execute("SELECT * FROM farmers WHERE id = ?;", (farmer_id,))
+        farmer = cursor.fetchone()
+        assert farmer is not None
+        assert farmer["name"] == "Harpal Singh"
+        assert farmer["phone"] == "+919876543210"
+        assert farmer["preferred_language"] == "pa"
+        assert farmer["is_active"] == 1
+        conn.close()
+
+    def test_field_farmer_relationship(self, setup_test_db):
+        """Verifies creating fields linked to a farmer and cascading deletion."""
+        conn = sqlite3.connect(str(setup_test_db))
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # Create farmer
+        cursor.execute(
+            """
+            INSERT INTO farmers (uuid, name, phone, created_at, updated_at)
+            VALUES (?, ?, ?, datetime('now'), datetime('now'));
+            """,
+            ("f-uuid-2", "Sunita Devi", "+919876543211"),
+        )
+        farmer_id = cursor.lastrowid
+
+        # Create field
+        cursor.execute(
+            """
+            INSERT INTO fields (uuid, farmer_id, name, crop_type, sowing_date, soil_type, area_acres, latitude, longitude, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'));
+            """,
+            ("fld-uuid-1", farmer_id, "South Acre", "Wheat", "2026-10-01", "Loam", 4.0, 30.9, 75.85),
+        )
+        field_id = cursor.lastrowid
+
+        cursor.execute("SELECT * FROM fields WHERE id = ?;", (field_id,))
+        field = cursor.fetchone()
+        assert field is not None
+        assert field["farmer_id"] == farmer_id
+        assert field["name"] == "South Acre"
+        assert field["crop_type"] == "Wheat"
+
+        # Cascade test: Deleting farmer deletes their fields
+        cursor.execute("DELETE FROM farmers WHERE id = ?;", (farmer_id,))
+        conn.commit()
+
+        cursor.execute("SELECT * FROM fields WHERE id = ?;", (field_id,))
+        assert cursor.fetchone() is None
+        conn.close()
+
+    def test_sensor_field_relationship(self, setup_test_db):
+        """Verifies sensor registration and linking to a field."""
+        conn = sqlite3.connect(str(setup_test_db))
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # Setup farmer & field
+        cursor.execute("INSERT INTO farmers (uuid, name, phone, created_at, updated_at) VALUES ('f-3', 'A', '+919876543212', datetime('now'), datetime('now'));")
+        farmer_id = cursor.lastrowid
+        cursor.execute("INSERT INTO fields (uuid, farmer_id, name, crop_type, created_at, updated_at) VALUES ('fld-2', ?, 'East Field', 'Corn', datetime('now'), datetime('now'));", (farmer_id,))
+        field_id = cursor.lastrowid
+
+        # Register sensor
+        cursor.execute(
+            """
+            INSERT INTO sensors (sensor_id, field_id, hardware_type, status, created_at, updated_at)
+            VALUES (?, ?, 'ESP32_DHT22_CAPACITIVE', 'ACTIVE', datetime('now'), datetime('now'));
+            """,
+            ("esp32_east_01", field_id),
+        )
+        sensor_pk = cursor.lastrowid
+
+        cursor.execute("SELECT * FROM sensors WHERE id = ?;", (sensor_pk,))
+        sensor = cursor.fetchone()
+        assert sensor is not None
+        assert sensor["sensor_id"] == "esp32_east_01"
+        assert sensor["field_id"] == field_id
+
+        # Field deletion sets sensor.field_id to NULL (ON DELETE SET NULL)
+        cursor.execute("DELETE FROM fields WHERE id = ?;", (field_id,))
+        conn.commit()
+
+        cursor.execute("SELECT * FROM sensors WHERE id = ?;", (sensor_pk,))
+        sensor_after = cursor.fetchone()
+        assert sensor_after is not None
+        assert sensor_after["field_id"] is None
+        conn.close()
+
+    def test_telemetry_sensor_field_association_on_ingest(self, client, setup_test_db):
+        """Verifies that when an ESP32 posts telemetry, backend auto-resolves sensor_id -> field_id."""
+        conn = sqlite3.connect(str(setup_test_db))
+        conn.execute("PRAGMA foreign_keys = ON;")
+        cursor = conn.cursor()
+
+        # Provision farmer, field, sensor
+        cursor.execute("INSERT INTO farmers (uuid, name, phone, created_at, updated_at) VALUES ('f-4', 'B', '+919876543213', datetime('now'), datetime('now'));")
+        farmer_id = cursor.lastrowid
+        cursor.execute("INSERT INTO fields (uuid, farmer_id, name, crop_type, created_at, updated_at) VALUES ('fld-3', ?, 'Tomato Zone', 'Tomato', datetime('now'), datetime('now'));", (farmer_id,))
+        field_id = cursor.lastrowid
+        cursor.execute("INSERT INTO sensors (sensor_id, field_id, created_at, updated_at) VALUES ('esp32_tomato_01', ?, datetime('now'), datetime('now'));", (field_id,))
+        conn.commit()
+        conn.close()
+
+        # Ingest payload from ESP32 containing ONLY sensor_id
+        payload = {
+            "sensor_id": "esp32_tomato_01",
+            "soil_moisture": 42.0,
+            "temperature": 27.5,
+            "humidity": 60.0,
+        }
+        res = client.post("/api/v1/sensors/ingest", json=payload)
+        assert res.status_code == 201
+
+        # Check telemetry row has field_id populated
+        conn = sqlite3.connect(str(setup_test_db))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM sensor_telemetry WHERE sensor_id = 'esp32_tomato_01';")
+        tel = cursor.fetchone()
+        assert tel is not None
+        assert tel["field_id"] == field_id
+
+        # Check sensor's last_seen_at was updated
+        cursor.execute("SELECT last_seen_at FROM sensors WHERE sensor_id = 'esp32_tomato_01';")
+        sensor_row = cursor.fetchone()
+        assert sensor_row["last_seen_at"] is not None
+        conn.close()
+
+    def test_historical_telemetry_preserved_when_field_deleted(self, setup_test_db):
+        """Verifies that historical telemetry is NOT cascade-deleted when a field is deleted."""
+        conn = sqlite3.connect(str(setup_test_db))
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute("INSERT INTO farmers (uuid, name, phone, created_at, updated_at) VALUES ('f-5', 'C', '+919876543214', datetime('now'), datetime('now'));")
+        farmer_id = cursor.lastrowid
+        cursor.execute("INSERT INTO fields (uuid, farmer_id, name, crop_type, created_at, updated_at) VALUES ('fld-4', ?, 'Potato Field', 'Potato', datetime('now'), datetime('now'));", (farmer_id,))
+        field_id = cursor.lastrowid
+
+        # Insert telemetry referencing this field
+        cursor.execute(
+            """
+            INSERT INTO sensor_telemetry (sensor_id, temperature, humidity, soil_moisture, timestamp, field_id)
+            VALUES ('esp32_potato_01', 22.0, 70.0, 38.0, datetime('now'), ?);
+            """,
+            (field_id,),
+        )
+        tel_id = cursor.lastrowid
+        conn.commit()
+
+        # Delete the field
+        cursor.execute("DELETE FROM fields WHERE id = ?;", (field_id,))
+        conn.commit()
+
+        # Telemetry record MUST still exist (historical preservation, field_id becomes NULL or stays intact without cascade)
+        cursor.execute("SELECT * FROM sensor_telemetry WHERE id = ?;", (tel_id,))
+        preserved_tel = cursor.fetchone()
+        assert preserved_tel is not None
+        assert preserved_tel["sensor_id"] == "esp32_potato_01"
+        assert preserved_tel["field_id"] is None
+        conn.close()
+
+    def test_alert_farmer_field_relationship(self, setup_test_db):
+        """Verifies creating alerts linked to farmer and field."""
+        conn = sqlite3.connect(str(setup_test_db))
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute("INSERT INTO farmers (uuid, name, phone, created_at, updated_at) VALUES ('f-6', 'D', '+919876543215', datetime('now'), datetime('now'));")
+        farmer_id = cursor.lastrowid
+        cursor.execute("INSERT INTO fields (uuid, farmer_id, name, crop_type, created_at, updated_at) VALUES ('fld-5', ?, 'Chilli Field', 'Chilli', datetime('now'), datetime('now'));", (farmer_id,))
+        field_id = cursor.lastrowid
+
+        cursor.execute(
+            """
+            INSERT INTO alerts (uuid, farmer_id, field_id, alert_type, severity, title, message, action_recommended, created_at)
+            VALUES ('al-1', ?, ?, 'WATER_STRESS', 'HIGH', 'Severe Drought', 'Soil dry for 24h', 'Start drip irrigation', datetime('now'));
+            """,
+            (farmer_id, field_id),
+        )
+        alert_id = cursor.lastrowid
+        conn.commit()
+
+        cursor.execute("SELECT * FROM alerts WHERE id = ?;", (alert_id,))
+        alert = cursor.fetchone()
+        assert alert is not None
+        assert alert["farmer_id"] == farmer_id
+        assert alert["field_id"] == field_id
+        assert alert["severity"] == "HIGH"
+        assert alert["status"] == "ACTIVE"
+        conn.close()
+
+    def test_notification_alert_farmer_relationship(self, setup_test_db):
+        """Verifies creating notifications linked to alert and farmer, with cascade delete on alert."""
+        conn = sqlite3.connect(str(setup_test_db))
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute("INSERT INTO farmers (uuid, name, phone, created_at, updated_at) VALUES ('f-7', 'E', '+919876543216', datetime('now'), datetime('now'));")
+        farmer_id = cursor.lastrowid
+        cursor.execute("INSERT INTO alerts (uuid, farmer_id, alert_type, severity, title, message, created_at) VALUES ('al-2', ?, 'HEAT_STRESS', 'MEDIUM', 'Heat Wave', '37C recorded', datetime('now'));", (farmer_id,))
+        alert_id = cursor.lastrowid
+
+        cursor.execute(
+            """
+            INSERT INTO notifications (alert_id, farmer_id, channel, status, recipient, sent_at)
+            VALUES (?, ?, 'SMS', 'DELIVERED', '+919876543216', datetime('now'));
+            """,
+            (alert_id, farmer_id),
+        )
+        notif_id = cursor.lastrowid
+        conn.commit()
+
+        cursor.execute("SELECT * FROM notifications WHERE id = ?;", (notif_id,))
+        notif = cursor.fetchone()
+        assert notif is not None
+        assert notif["alert_id"] == alert_id
+        assert notif["farmer_id"] == farmer_id
+        assert notif["channel"] == "SMS"
+        assert notif["status"] == "DELIVERED"
+
+        # Cascade test: Deleting alert cascades to notifications
+        cursor.execute("DELETE FROM alerts WHERE id = ?;", (alert_id,))
+        conn.commit()
+
+        cursor.execute("SELECT * FROM notifications WHERE id = ?;", (notif_id,))
+        assert cursor.fetchone() is None
+        conn.close()
+
+    def test_foreign_key_enforcement(self, setup_test_db):
+        """Verifies that foreign key violations raise sqlite3.IntegrityError."""
+        conn = sqlite3.connect(str(setup_test_db))
+        conn.execute("PRAGMA foreign_keys = ON;")
+        cursor = conn.cursor()
+
+        # Insert field with nonexistent farmer_id
+        with pytest.raises(sqlite3.IntegrityError):
+            cursor.execute(
+                """
+                INSERT INTO fields (uuid, farmer_id, name, crop_type, created_at, updated_at)
+                VALUES ('fld-err', 99999, 'Invalid', 'Crop', datetime('now'), datetime('now'));
+                """
+            )
+
+        # Insert alert with nonexistent farmer_id
+        with pytest.raises(sqlite3.IntegrityError):
+            cursor.execute(
+                """
+                INSERT INTO alerts (uuid, farmer_id, alert_type, severity, title, message, created_at)
+                VALUES ('al-err', 99999, 'WATER_STRESS', 'LOW', 'Title', 'Msg', datetime('now'));
+                """
+            )
+        conn.close()
+
+    def test_duplicate_phone_rejected(self, setup_test_db):
+        """Verifies UNIQUE constraint on farmers.phone."""
+        conn = sqlite3.connect(str(setup_test_db))
+        cursor = conn.cursor()
+
+        cursor.execute("INSERT INTO farmers (uuid, name, phone, created_at, updated_at) VALUES ('f-p1', 'P1', '+919000000001', datetime('now'), datetime('now'));")
+        conn.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            cursor.execute("INSERT INTO farmers (uuid, name, phone, created_at, updated_at) VALUES ('f-p2', 'P2', '+919000000001', datetime('now'), datetime('now'));")
+        conn.close()
+
+    def test_duplicate_sensor_id_rejected(self, setup_test_db):
+        """Verifies UNIQUE constraint on sensors.sensor_id."""
+        conn = sqlite3.connect(str(setup_test_db))
+        cursor = conn.cursor()
+
+        cursor.execute("INSERT INTO sensors (sensor_id, created_at, updated_at) VALUES ('esp32_dup_test', datetime('now'), datetime('now'));")
+        conn.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            cursor.execute("INSERT INTO sensors (sensor_id, created_at, updated_at) VALUES ('esp32_dup_test', datetime('now'), datetime('now'));")
+        conn.close()
+
+
