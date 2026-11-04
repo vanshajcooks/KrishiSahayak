@@ -16,9 +16,15 @@ elif __name__ == "main":
         pass
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
+
+from dotenv import load_dotenv
+
+# Load environment variables from .env file before other modules read environment variables
+load_dotenv()
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +46,7 @@ try:
     )
     from backend.vision import load_model, predict_image, warmup_model
     from backend.weather import fetch_weather_async
+    from backend.routers.auth import router as auth_router
 except ImportError:
     from analysis import build_unified_analysis, evaluate_vision_reliability, is_telemetry_fresh
     from database import get_db_path, get_latest_reading, init_db, insert_reading
@@ -57,6 +64,7 @@ except ImportError:
     )
     from vision import load_model, predict_image, warmup_model
     from weather import fetch_weather_async
+    from routers.auth import router as auth_router
 
 
 logger = logging.getLogger("smart_farming.backend")
@@ -88,14 +96,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware for Next.js frontend communication
+# Configurable CORS origins (explicit origins required when allow_credentials=True)
+import os
+raw_allowed_origins = os.environ.get(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000",
+)
+allowed_origins = [orig.strip() for orig in raw_allowed_origins.split(",") if orig.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register sub-routers
+app.include_router(auth_router)
 
 
 @app.get(

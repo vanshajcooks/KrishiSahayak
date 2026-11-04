@@ -92,12 +92,31 @@ def init_db(db_path: Optional[Union[str, Path]] = None) -> None:
                 village TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                is_active INTEGER NOT NULL DEFAULT 1
+                is_active INTEGER NOT NULL DEFAULT 1,
+                last_login_at TEXT,
+                token_version INTEGER NOT NULL DEFAULT 1,
+                failed_login_count INTEGER NOT NULL DEFAULT 0,
+                locked_until TEXT,
+                deactivated_at TEXT
             );
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_farmers_phone ON farmers (phone);
         """)
+
+        # Non-destructive check & addition of auth columns for existing databases
+        cursor.execute("PRAGMA table_info(farmers);")
+        farmer_cols = [row[1] for row in cursor.fetchall()]
+        if "last_login_at" not in farmer_cols:
+            cursor.execute("ALTER TABLE farmers ADD COLUMN last_login_at TEXT;")
+        if "token_version" not in farmer_cols:
+            cursor.execute("ALTER TABLE farmers ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1;")
+        if "failed_login_count" not in farmer_cols:
+            cursor.execute("ALTER TABLE farmers ADD COLUMN failed_login_count INTEGER NOT NULL DEFAULT 0;")
+        if "locked_until" not in farmer_cols:
+            cursor.execute("ALTER TABLE farmers ADD COLUMN locked_until TEXT;")
+        if "deactivated_at" not in farmer_cols:
+            cursor.execute("ALTER TABLE farmers ADD COLUMN deactivated_at TEXT;")
 
         # 2. Fields table
         cursor.execute("""
